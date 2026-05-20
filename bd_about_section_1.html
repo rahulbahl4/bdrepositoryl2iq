@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'DM Sans', sans-serif; background: transparent; padding: 0; margin: 0; }
+  .container { max-width: 900px; width: 100%; }
+
+  /* ── Onboarding Banner ── */
+  .onboarding-banner {
+    background: linear-gradient(135deg, #0f3d28 0%, #1a6b4a 60%, #1e7d56 100%);
+    border-radius: 18px;
+    padding: 28px 32px;
+    margin-bottom: 28px;
+    position: relative;
+    overflow: hidden;
+    animation: fadeUp 0.4s ease both;
+    transition: opacity 0.4s ease, transform 0.4s ease, max-height 0.5s ease, margin 0.4s ease, padding 0.4s ease;
+  }
+  .onboarding-banner.dismissed {
+    opacity: 0;
+    transform: translateY(-10px);
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    pointer-events: none;
+  }
+  .onboarding-banner::before {
+    content: '';
+    position: absolute;
+    top: -40px; right: -40px;
+    width: 200px; height: 200px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.05);
+  }
+  .onboarding-banner::after {
+    content: '';
+    position: absolute;
+    bottom: -60px; left: 30%;
+    width: 280px; height: 280px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.04);
+  }
+  .banner-inner { position: relative; z-index: 1; }
+  .banner-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+  .banner-heading { display: flex; align-items: center; gap: 12px; }
+  .banner-emoji { font-size: 26px; }
+  .banner-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.55); margin-bottom: 4px; }
+  .banner-title { font-family: 'DM Serif Display', serif; font-size: 1.5rem; color: #fff; line-height: 1.1; }
+  .banner-title em { font-style: italic; color: #7dd9aa; }
+  .dismiss-btn {
+    flex-shrink: 0;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 8px;
+    color: rgba(255,255,255,0.7);
+    font-size: 12px;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    padding: 7px 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.18s ease;
+    white-space: nowrap;
+  }
+  .dismiss-btn:hover { background: rgba(255,255,255,0.2); color: #fff; }
+  .banner-subtitle { font-size: 13.5px; color: rgba(255,255,255,0.7); line-height: 1.6; margin-bottom: 22px; font-weight: 300; max-width: 560px; }
+
+  .steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .step {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 12px;
+    padding: 14px 14px 16px;
+    transition: background 0.2s ease;
+  }
+  .step:hover { background: rgba(255,255,255,0.16); }
+  .step-num { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: #7dd9aa; margin-bottom: 8px; }
+  .step-icon { font-size: 18px; margin-bottom: 8px; display: block; }
+  .step-label { font-size: 12px; font-weight: 600; color: #fff; line-height: 1.35; margin-bottom: 5px; }
+  .step-desc { font-size: 11px; color: rgba(255,255,255,0.6); line-height: 1.5; font-weight: 300; }
+
+  .banner-footer { margin-top: 18px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.12); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .banner-footer-text { font-size: 12.5px; color: rgba(255,255,255,0.55); font-weight: 300; }
+  .banner-footer-text strong { color: rgba(255,255,255,0.85); font-weight: 500; }
+  .banner-contact { display: flex; gap: 8px; }
+  .banner-chip { font-size: 11px; font-weight: 500; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.75); padding: 5px 12px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.18); white-space: nowrap; }
+
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+
+  @media (max-width: 700px) {
+    .steps { grid-template-columns: repeat(2, 1fr); }
+    .banner-footer { flex-direction: column; align-items: flex-start; }
+  }
+  @media (max-width: 480px) {
+    .steps { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="onboarding-banner" id="onboardingBanner">
+    <div class="banner-inner">
+      <div class="banner-top">
+        <div class="banner-heading">
+          <div class="banner-emoji">👋</div>
+          <div class="banner-title-block">
+            <div class="banner-eyebrow">Getting started</div>
+            <div class="banner-title">New to <em>Business Development?</em></div>
+          </div>
+        </div>
+        <button class="dismiss-btn" onclick="dismissBanner()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          Got it
+        </button>
+      </div>
+
+      <p class="banner-subtitle">Here are the five things to do before you start working on opportunities. Run through these in order and you'll be set up and ready to go.</p>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">STEP 01</div>
+          <span class="step-icon">📖</span>
+          <div class="step-label">Read the BD Process</div>
+          <div class="step-desc">Understand how opportunities move from identification through to submission.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">STEP 02</div>
+          <span class="step-icon">✅</span>
+          <div class="step-label">Learn the Go / No Go</div>
+          <div class="step-desc">Every opportunity needs a Go/No Go assessment before we commit.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">STEP 03</div>
+          <span class="step-icon">🔑</span>
+          <div class="step-label">Get Portal Access</div>
+          <div class="step-desc">Request access to Buy NSW, Ariba, Zycus and Coupa from the primary account holders.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">STEP 04</div>
+          <span class="step-icon">🔔</span>
+          <div class="step-label">Set Tender Alerts</div>
+          <div class="step-desc">Register on Australian Tenders and Vendor Panel and set up your own alerts.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">STEP 05</div>
+          <span class="step-icon">📄</span>
+          <div class="step-label">Download Cap Statements</div>
+          <div class="step-desc">Read our capability statements so you know which version to use for each opportunity.</div>
+        </div>
+      </div>
+
+      <div class="banner-footer">
+        <p class="banner-footer-text">Questions? Your first stop is <strong>Head of Strategy & Growth</strong>.</p>
+        <div class="banner-contact">
+          <div class="banner-chip">📈 Head of Strategy & Growth</div>
+          <div class="banner-chip">📞 Office Manager</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  if (localStorage.getItem('bd_banner_dismissed') === 'true') {
+    const b = document.getElementById('onboardingBanner');
+    b.style.display = 'none';
+  }
+
+  function dismissBanner() {
+    const b = document.getElementById('onboardingBanner');
+    b.classList.add('dismissed');
+    setTimeout(() => { b.style.display = 'none'; }, 500);
+    try { localStorage.setItem('bd_banner_dismissed', 'true'); } catch(e) {}
+  }
+</script>
+</body>
+</html>
