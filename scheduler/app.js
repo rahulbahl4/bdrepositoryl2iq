@@ -243,9 +243,17 @@
       + `<span class="${u > 100.5 ? 'over-text' : ''}">${round1(used)} / ${round1(pr.budgetHours)}h</span></div>`;
   }
 
+  // All Australian states and territories are always offered; any other regions in use are added after them.
+  const AU_REGIONS = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'];
   function allRegions() {
-    return [...new Set([...state.people.map((p) => p.region), ...state.holidays.map((h) => h.region), ...state.shutdowns.map((x) => x.region)].filter(Boolean))].sort();
+    const used = [...state.people.map((p) => p.region), ...state.holidays.map((h) => h.region), ...state.shutdowns.map((x) => x.region)].filter(Boolean);
+    return [...AU_REGIONS, ...[...new Set(used)].filter((r) => !AU_REGIONS.includes(r)).sort()];
   }
+  const regionSelect = (value, emptyLabel) => `<select name="region" data-region-select data-prev="${esc(value || '')}">
+      <option value="">${esc(emptyLabel)}</option>
+      ${allRegions().map((r) => `<option value="${esc(r)}" ${r === value ? 'selected' : ''}>${esc(r)}</option>`).join('')}
+      <option value="__other">Other…</option>
+    </select>`;
 
   function personStats(p, s, e) {
     let capacity = 0, scheduled = 0, billable = 0, timeoff = 0, tentative = 0, closedHours = 0, closedWork = 0, closedDays = 0;
@@ -740,9 +748,8 @@
   }
 
   const regionField = (value) => `
-    <label class="field">Applies to state / region<input name="region" value="${esc(value || '')}" list="regionList2" placeholder="Leave empty for everyone"></label>
-    <datalist id="regionList2">${allRegions().map((r) => `<option value="${esc(r)}">`).join('')}</datalist>
-    <p class="hint" style="margin:0">Applies to people whose state / region matches. Leave it empty to apply to everyone.</p>`;
+    <label class="field">Applies to state / territory${regionSelect(value, 'Everyone (all states)')}</label>
+    <p class="hint" style="margin:0">Choose a state or territory to apply it only to people there.</p>`;
 
   function openHolidayModal(h) {
     const isNew = !h;
@@ -1009,8 +1016,7 @@
           <div class="field"><span>Discipline</span><div class="inline"><select name="disciplineId">${discOpts()}</select>
             <button type="button" class="btn" id="quickDisc" title="Add a discipline">+ New</button></div></div>
         </div>
-        <label class="field">State / region (for public holidays)<input name="region" value="${esc(p.region || '')}" list="regionList" placeholder="e.g. NSW, California, Ontario"></label>
-        <datalist id="regionList">${allRegions().map((r) => `<option value="${esc(r)}">`).join('')}</datalist>
+        <label class="field">State / territory (for public holidays)${regionSelect(p.region || '', 'None (company-wide holidays only)')}</label>
         <label class="field">Work hours per day (Mon–Fri)<input type="number" name="capacity" min="0" max="24" step="0.5" value="${p.capacity}"></label>`,
       footer: saveFooter(isNew ? '' : `<button type="button" class="btn danger" id="delPerson">Delete</button>`),
       mount(form) {
@@ -1321,6 +1327,18 @@
   });
   document.addEventListener('change', (e) => {
     const id = e.target.id;
+    if (e.target.matches('select[data-region-select]')) {
+      const sel = e.target;
+      if (sel.value === '__other') {
+        const name = (prompt('State, territory or region name') || '').trim();
+        if (!name) { sel.value = sel.dataset.prev; return; }
+        let opt = [...sel.options].find((o) => o.value.toLowerCase() === name.toLowerCase());
+        if (!opt) { opt = new Option(name, name); sel.insertBefore(opt, sel.querySelector('option[value="__other"]')); }
+        sel.value = opt.value;
+      }
+      sel.dataset.prev = sel.value;
+      return;
+    }
     if (id === 'projectFilter') { ui.projectFilter = e.target.value; render(); }
     else if (id === 'groupBy') { ui.groupBy = e.target.value; render(); }
     else if (id === 'holRegion') { ui.holRegion = e.target.value; render(); }
