@@ -63,6 +63,12 @@
     reportEnd: monthEnd(todayStr()),
   }, loadUI());
   ui.viewStart = startOfWeek(ui.viewStart);
+  normalize(state);
+  function normalize(d) {
+    if (!Array.isArray(d.holidays)) d.holidays = [];
+    if (!Array.isArray(d.shutdowns)) d.shutdowns = [];
+    return d;
+  }
   const undoStack = [], redoStack = [];
 
   function loadData() {
@@ -112,16 +118,16 @@
 
   // ---------------------------------------------------------------- sample data
   function seed() {
-    const P = (name, role, dept, capacity = 8) => ({ id: uid(), name, role, dept, capacity });
+    const P = (name, role, dept, region, capacity = 8) => ({ id: uid(), name, role, dept, region, capacity });
     const people = [
-      P('Ava Thompson', 'Design Lead', 'Design'),
-      P('Liam Carter', 'Product Designer', 'Design'),
-      P('Noah Patel', 'Frontend Engineer', 'Engineering'),
-      P('Mia Chen', 'Backend Engineer', 'Engineering'),
-      P('Ethan Brooks', 'Full-stack Engineer', 'Engineering', 6),
-      P('Lucas Kim', 'QA Engineer', 'Engineering'),
-      P('Sofia Rossi', 'Project Manager', 'Delivery'),
-      P('Zoe Martin', 'Content Strategist', 'Marketing', 4),
+      P('Ava Thompson', 'Design Lead', 'Design', 'NSW'),
+      P('Liam Carter', 'Product Designer', 'Design', 'VIC'),
+      P('Noah Patel', 'Frontend Engineer', 'Engineering', 'VIC'),
+      P('Mia Chen', 'Backend Engineer', 'Engineering', 'NSW'),
+      P('Ethan Brooks', 'Full-stack Engineer', 'Engineering', 'QLD', 6),
+      P('Lucas Kim', 'QA Engineer', 'Engineering', 'VIC'),
+      P('Sofia Rossi', 'Project Manager', 'Delivery', 'NSW'),
+      P('Zoe Martin', 'Content Strategist', 'Marketing', 'QLD', 4),
     ];
     const Pr = (name, client, color, billable = true) => ({ id: uid(), name, client, color, billable, archived: false });
     const projects = [
@@ -152,7 +158,23 @@
       A(7, 4, 0, 19, 4), A(7, 2, 21, 12, 2),
       T(2, 30, 5), T(6, 14, 3, 'Conference'), T(4, 7, 1, 'Sick day'), T(0, 42, 5),
     ];
-    return { people, projects, allocations };
+    // Example holidays: a few fixed-date ones that repeat yearly, plus a state-only one
+    // (first Tuesday of November, Victoria) so the regional behaviour is visible.
+    const year = todayStr().slice(0, 4);
+    const nov1 = `${year}-11-01`;
+    const firstTueNov = addDays(nov1, (2 - dow(nov1) + 7) % 7);
+    const H = (name, date, region = '', recurring = false) => ({ id: uid(), name, date, region, recurring });
+    const holidays = [
+      H("New Year's Day", `${year}-01-01`, '', true),
+      H('Christmas Day', `${year}-12-25`, '', true),
+      H('Boxing Day', `${year}-12-26`, '', true),
+      H('Melbourne Cup Day', firstTueNov, 'VIC'),
+      H('Sample QLD holiday', addDays(w, 23), 'QLD'),
+    ];
+    const shutdowns = [
+      { id: uid(), name: 'End-of-year shutdown', start: `${year}-12-24`, end: `${+year + 1}-01-02`, region: '' },
+    ];
+    return { people, projects, allocations, holidays, shutdowns };
   }
 
   // ---------------------------------------------------------------- calculations
@@ -160,21 +182,46 @@
     const st = maxS(a.start, s), en = minS(a.end, e);
     return st > en ? 0 : workdays(st, en) * (+a.hoursPerDay || 0);
   }
-  function personStats(p, s, e) {
-    let scheduled = 0, billable = 0, timeoff = 0, tentative = 0;
-    for (const a of state.allocations) {
-      if (a.personId !== p.id || a.end < s || a.start > e) continue;
-      const h = hoursInRange(a, s, e);
-      if (a.type === 'timeoff') { timeoff += h; continue; }
-      scheduled += h;
-      if (a.tentative) tentative += h;
-      const pr = findProject(a.projectId);
-      if (pr && pr.billable) billable += h;
+  // ----- public holidays & shutdowns
+  // A holiday or shutdown with region '' applies to everyone; otherwise only to people in that region.
+  // They remove capacity but never block scheduling: work placed on them still counts.
+  const appliesTo = (ev, person) => !ev.region || (person && ev.region === person.region);
+  function closuresOn(day) {
+    const out = [];
+    for (const h of state.holidays) {
+      if (h.date === day || (h.recurring && h.date.slice(5) === day.slice(5) && h.date <= day)) out.push({ kind: 'holiday', name: h.name, region: h.region });
     }
-    const gross = workdays(s, e) * (+p.capacity || 0);
-    const capacity = Math.max(0, gross - timeoff);
+    for (const sd of state.shutdowns) if (day >= sd.start && day <= sd.end) out.push({ kind: 'shutdown', name: sd.name, region: sd.region });
+    return out;
+  }
+  const closureFor = (person, day) => closuresOn(day).find((c) => appliesTo(c, person)) || null;
+  const closureLabel = (c) => `${c.kind === 'shutdown' ? 'Shutdown' : 'Public holiday'}: ${c.name}${c.region ? ` (${c.region})` : ''}`;
+  function allRegions() {
+    return [...new Set([...state.people.map((p) => p.region), ...state.holidays.map((h) => h.region), ...state.shutdowns.map((x) => x.region)].filter(Boolean))].sort();
+  }
+
+  function personStats(p, s, e) {
+    let capacity = 0, scheduled = 0, billable = 0, timeoff = 0, tentative = 0, closedHours = 0, closedWork = 0, closedDays = 0;
+    const cap = +p.capacity || 0;
+    const allocs = state.allocations.filter((a) => a.personId === p.id && a.end >= s && a.start <= e);
+    for (let d = s; d <= e; d = addDays(d, 1)) {
+      if (isWeekend(d)) continue;
+      const closed = !!closureFor(p, d);
+      let off = 0;
+      for (const a of allocs) {
+        if (d < a.start || d > a.end) continue;
+        const h = +a.hoursPerDay || 0;
+        if (a.type === 'timeoff') { if (!closed) off += h; continue; }
+        scheduled += h;
+        if (a.tentative) tentative += h;
+        if (closed) closedWork += h;
+        const pr = findProject(a.projectId);
+        if (pr && pr.billable) billable += h;
+      }
+      if (closed) { closedHours += cap; closedDays++; } else { timeoff += off; capacity += Math.max(0, cap - off); }
+    }
     const util = capacity ? (scheduled / capacity) * 100 : (scheduled ? 999 : 0);
-    return { capacity, scheduled, billable, timeoff, tentative, util, available: capacity - scheduled };
+    return { capacity, scheduled, billable, timeoff, tentative, closedHours, closedWork, closedDays, util, available: capacity - scheduled };
   }
   function assignLanes(list) {
     const sorted = [...list].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : a.end < b.end ? 1 : -1));
@@ -197,6 +244,7 @@
     if (ui.view === 'schedule') renderSchedule();
     else if (ui.view === 'projects') renderProjects();
     else if (ui.view === 'people') renderPeople();
+    else if (ui.view === 'holidays') renderHolidays();
     else renderReport();
     updateUndoButtons();
     saveUI();
@@ -265,13 +313,16 @@
     }
     const dayCells = dayList.map((d, i) => {
       const w = dow(d);
-      const cls = ['hd', isWeekend(d) ? 'we' : '', w === 1 ? 'mon' : '', d === today ? 'today' : ''].join(' ');
+      const cl = closuresOn(d);
+      const cls = ['hd', isWeekend(d) ? 'we' : '', w === 1 ? 'mon' : '', d === today ? 'today' : '',
+        cl.length ? (cl.some((c) => c.kind === 'shutdown') ? 'has-shut' : 'has-hol') : ''].join(' ');
+      const tip = fmtDate(d, { weekday: 'long', month: 'long', day: 'numeric' }) + cl.map((c) => `\n${closureLabel(c)}`).join('');
       let inner = '';
       const num = +d.slice(8);
       if (dayW >= 40) inner = `<span>${fmtDate(d, { weekday: 'short' })}</span><b>${num}</b>`;
       else if (dayW >= 28) inner = `<span>${fmtDate(d, { weekday: 'narrow' })}</span><b>${num}</b>`;
       else if (w === 1) inner = `<b style="margin-left:${dayW * 3}px">${num}</b>`;
-      return `<div class="${cls}" style="width:${dayW}px" title="${fmtDate(d, { weekday: 'long', month: 'long', day: 'numeric' })}" data-i="${i}">${inner}</div>`;
+      return `<div class="${cls}" style="width:${dayW}px" title="${esc(tip)}" data-i="${i}">${inner}</div>`;
     }).join('');
 
     const people = visiblePeople();
@@ -329,9 +380,19 @@
     let loadHtml = '';
     for (let i = 0; i < days; i++) {
       if (isWeekend(dayList[i])) continue;
-      const cap = Math.max(0, (+p.capacity || 0) - off[i]);
       const h = sched[i];
-      const title = `${fmtDate(dayList[i], { weekday: 'short', month: 'short', day: 'numeric' })}: ${hrs(h)} scheduled of ${hrs(cap)} available`;
+      const dayName = fmtDate(dayList[i], { weekday: 'short', month: 'short', day: 'numeric' });
+      const closure = closureFor(p, dayList[i]);
+      if (closure) {
+        // Non-working day for this person: shade it, but still allow (and count) any work placed here.
+        loadHtml += `<div class="closed-col ${closure.kind}" style="left:${i * dayW}px;width:${dayW}px"></div>`;
+        if (h > 0) loadHtml += `<div class="load hol" style="left:${i * dayW + 3}px;width:${dayW - 6}px"></div>`;
+        const t = `${dayName}: ${closureLabel(closure)}${h > 0 ? ` · ${hrs(h)} scheduled anyway` : ''}`;
+        loadHtml += `<div class="load-hit" style="left:${i * dayW}px;width:${dayW}px" title="${esc(t)}"></div>`;
+        continue;
+      }
+      const cap = Math.max(0, (+p.capacity || 0) - off[i]);
+      const title = `${dayName}: ${hrs(h)} scheduled of ${hrs(cap)} available`;
       if (h > cap + 1e-9) {
         loadHtml += `<div class="over-col" style="left:${i * dayW}px;width:${dayW}px"></div>`;
         loadHtml += `<div class="load over" style="left:${i * dayW + 3}px;width:${dayW - 6}px"></div>`;
@@ -354,7 +415,7 @@
           <div class="avatar" style="background:${color}">${esc(initials(p.name))}</div>
           <div class="who">
             <div class="name">${esc(p.name)}</div>
-            <div class="role">${esc(p.role || '')}${p.role ? ' · ' : ''}${round1(p.capacity)}h/day</div>
+            <div class="role">${esc(p.role || '')}${p.role ? ' · ' : ''}${p.region ? `${esc(p.region)} · ` : ''}${round1(p.capacity)}h/day</div>
             <div class="util" title="${hrs(st.scheduled)} scheduled of ${hrs(st.capacity)} capacity in view">
               <div class="meter ${meterCls}"><i style="width:${Math.min(100, st.util)}%"></i></div>
               <b class="${meterCls === 'over' ? 'over' : ''}">${pct(Math.min(st.util, 999))}</b>
@@ -441,6 +502,7 @@
         <td><div class="cell-person"><div class="avatar" style="background:${p.color || hashColor(p.name)}">${esc(initials(p.name))}</div><b>${esc(p.name)}</b></div></td>
         <td>${esc(p.role || '—')}</td>
         <td>${esc(p.dept || '—')}</td>
+        <td>${esc(p.region || '—')}</td>
         <td class="num">${round1(p.capacity)}h</td>
         <td>${meter(thisWeek.util)}</td>
         <td>${meter(next4.util)}</td>
@@ -450,8 +512,8 @@
     main.innerHTML = `<div class="page">
       <h2>People</h2><p class="lede">Your team, their capacity, and how booked they are.</p>
       <div class="card"><div class="table-wrap"><table>
-        <thead><tr><th>Name</th><th>Role</th><th>Department</th><th class="num">Capacity/day</th><th>This week</th><th>Next 4 weeks</th><th class="num">Free (4 wks)</th><th></th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="8" class="empty-state">No people yet.</td></tr>'}</tbody>
+        <thead><tr><th>Name</th><th>Role</th><th>Department</th><th>State / region</th><th class="num">Capacity/day</th><th>This week</th><th>Next 4 weeks</th><th class="num">Free (4 wks)</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="9" class="empty-state">No people yet.</td></tr>'}</tbody>
       </table></div></div></div>`;
   }
 
@@ -469,7 +531,7 @@
         <button class="btn" data-preset="next">Next month</button>
         <button class="btn" data-preset="quarter">This quarter</button>
       </div>`;
-    const totals = { capacity: 0, scheduled: 0, billable: 0, timeoff: 0, tentative: 0 };
+    const totals = { capacity: 0, scheduled: 0, billable: 0, timeoff: 0, tentative: 0, closedHours: 0, closedWork: 0 };
     const peopleRows = [...state.people].sort((a, b) => a.name.localeCompare(b.name)).map((p) => {
       const st = personStats(p, s, e);
       for (const k in totals) totals[k] += st[k];
@@ -477,6 +539,8 @@
         <td><div class="cell-person"><div class="avatar" style="background:${p.color || hashColor(p.name)}">${esc(initials(p.name))}</div>${esc(p.name)}</div></td>
         <td class="num">${hrs(st.capacity)}</td><td class="num">${hrs(st.scheduled)}</td><td class="num">${hrs(st.billable)}</td>
         <td class="num">${hrs(st.scheduled - st.billable)}</td><td class="num">${hrs(st.timeoff)}</td>
+        <td class="num" title="${st.closedDays} day(s) of capacity removed">${hrs(st.closedHours)}</td>
+        <td class="num">${st.closedWork ? `<span class="hol-note">${hrs(st.closedWork)}</span>` : '0h'}</td>
         <td><div class="hbar"><div class="meter ${st.util > 100.5 ? 'over' : st.util >= 99.5 ? 'full' : ''}"><i style="width:${Math.min(100, st.util)}%"></i></div><span>${pct(Math.min(st.util, 999))}</span></div></td></tr>`;
     }).join('');
 
@@ -498,15 +562,158 @@
       <div class="tiles">
         ${tile('Capacity', hrs(totals.capacity))}${tile('Scheduled', hrs(totals.scheduled))}
         ${tile('Billable', hrs(totals.billable))}${tile('Non-billable', hrs(totals.scheduled - totals.billable))}
-        ${tile('Time off', hrs(totals.timeoff))}${tile('Utilization', pct(util))}
+        ${tile('Time off', hrs(totals.timeoff))}${tile('Holidays &amp; shutdowns', hrs(totals.closedHours))}
+        ${tile('Worked on holidays', hrs(totals.closedWork))}${tile('Utilization', pct(util))}
       </div>
       <div class="card"><h3>By person</h3><div class="table-wrap"><table>
-        <thead><tr><th>Person</th><th class="num">Capacity</th><th class="num">Scheduled</th><th class="num">Billable</th><th class="num">Non-billable</th><th class="num">Time off</th><th>Utilization</th></tr></thead>
-        <tbody>${peopleRows || '<tr><td colspan="7">No people.</td></tr>'}</tbody></table></div></div>
+        <thead><tr><th>Person</th><th class="num">Capacity</th><th class="num">Scheduled</th><th class="num">Billable</th><th class="num">Non-billable</th><th class="num">Time off</th><th class="num">Holidays &amp; shutdowns</th><th class="num">Worked on those days</th><th>Utilization</th></tr></thead>
+        <tbody>${peopleRows || '<tr><td colspan="9">No people.</td></tr>'}</tbody></table></div></div>
       <div class="card"><h3>By project</h3><div class="table-wrap"><table>
         <thead><tr><th>Project</th><th>Client</th><th class="num">People</th><th>Hours</th><th class="num">Share</th></tr></thead>
         <tbody>${projRows || '<tr><td colspan="5">Nothing scheduled in this range.</td></tr>'}</tbody></table></div></div>
     </div>`;
+  }
+
+  // ----- holidays & shutdowns
+  function renderHolidays() {
+    $('#schedule')?.remove();
+    main.className = '';
+    const regions = allRegions();
+    const f = ui.holRegion || '';
+    toolbar.innerHTML = `<button class="btn primary" data-act="new-holiday">+ Public holiday</button>
+      <button class="btn" data-act="bulk-holidays">Paste a list…</button>
+      <button class="btn" data-act="new-shutdown">+ Shutdown</button>
+      <span class="spacer"></span>
+      <label class="toggle">Show <select id="holRegion"><option value="">All states / regions</option>
+        ${regions.map((r) => `<option value="${esc(r)}" ${r === f ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>`;
+    const match = (ev) => !f || !ev.region || ev.region === f;
+    const affected = (ev) => state.people.filter((p) => appliesTo(ev, p)).length;
+    const regionCell = (r) => (r ? `<span class="tag">${esc(r)}</span>` : '<span class="tag ok">Everyone</span>');
+    const hol = state.holidays.filter(match).sort((a, b) => (a.date < b.date ? -1 : 1)).map((h) => `<tr>
+        <td>${fmtDate(h.date, h.recurring ? { month: 'short', day: 'numeric' } : { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}${h.recurring ? ' <span class="tag">Every year</span>' : ''}</td>
+        <td><span class="dot hol-dot"></span><b>${esc(h.name)}</b></td>
+        <td>${regionCell(h.region)}</td>
+        <td class="num">${affected(h)}</td>
+        <td><div class="actions"><button class="btn sm" data-act="edit-holiday" data-id="${h.id}">Edit</button></div></td></tr>`).join('');
+    const shut = state.shutdowns.filter(match).sort((a, b) => (a.start < b.start ? -1 : 1)).map((x) => `<tr>
+        <td>${rangeLabel(x.start, x.end)}</td>
+        <td><span class="dot shut-dot"></span><b>${esc(x.name)}</b></td>
+        <td>${regionCell(x.region)}</td>
+        <td class="num">${workdays(x.start, x.end)}</td>
+        <td class="num">${affected(x)}</td>
+        <td><div class="actions"><button class="btn sm" data-act="edit-shutdown" data-id="${x.id}">Edit</button></div></td></tr>`).join('');
+    main.innerHTML = `<div class="page">
+      <h2>Holidays &amp; shutdowns</h2>
+      <p class="lede">These days are taken out of capacity for the people they apply to. Set each person's state or region on the People page.
+        They <b>don't block scheduling</b>: you can still put work on these days and it counts, marked in amber on the schedule.</p>
+      <div class="card"><h3>Public holidays</h3><div class="table-wrap"><table>
+        <thead><tr><th>Date</th><th>Holiday</th><th>Applies to</th><th class="num">People</th><th></th></tr></thead>
+        <tbody>${hol || '<tr><td colspan="5" class="hint">No public holidays yet. Add one, or paste a list.</td></tr>'}</tbody></table></div></div>
+      <div class="card"><h3>Shutdowns</h3><div class="table-wrap"><table>
+        <thead><tr><th>Dates</th><th>Name</th><th>Applies to</th><th class="num">Working days</th><th class="num">People</th><th></th></tr></thead>
+        <tbody>${shut || '<tr><td colspan="6" class="hint">No shutdowns yet, e.g. an end-of-year office closure.</td></tr>'}</tbody></table></div></div>
+    </div>`;
+  }
+
+  const regionField = (value) => `
+    <label class="field">Applies to state / region<input name="region" value="${esc(value || '')}" list="regionList2" placeholder="Leave empty for everyone"></label>
+    <datalist id="regionList2">${allRegions().map((r) => `<option value="${esc(r)}">`).join('')}</datalist>
+    <p class="hint" style="margin:0">Applies to people whose state / region matches. Leave it empty to apply to everyone.</p>`;
+
+  function openHolidayModal(h) {
+    const isNew = !h;
+    h = h || { name: '', date: todayStr(), region: ui.holRegion || '', recurring: false };
+    modal({
+      title: isNew ? 'Add public holiday' : 'Edit public holiday',
+      body: `
+        <label class="field">Name<input name="name" value="${esc(h.name)}" required placeholder="e.g. Labour Day"></label>
+        <div class="grid2">
+          <label class="field">Date<input type="date" name="date" value="${h.date}" required></label>
+          <label class="check"><input type="checkbox" name="recurring" ${h.recurring ? 'checked' : ''}> Same date every year</label>
+        </div>
+        ${regionField(h.region)}`,
+      footer: saveFooter(isNew ? '' : '<button type="button" class="btn danger" id="delHol">Delete</button>'),
+      mount(form) {
+        if (isNew) return;
+        $('#delHol', form).addEventListener('click', () => {
+          commit((st) => { st.holidays = st.holidays.filter((x) => x.id !== h.id); });
+          closeModal(); toast('Holiday deleted — Ctrl+Z to undo');
+        });
+      },
+      onSubmit(fd) {
+        const name = (fd.get('name') || '').trim(), date = fd.get('date');
+        if (!name) return 'Name is required.';
+        if (!date) return 'Please choose a date.';
+        const data = { name, date, region: (fd.get('region') || '').trim(), recurring: fd.get('recurring') === 'on' };
+        commit((st) => { if (isNew) st.holidays.push({ id: uid(), ...data }); else Object.assign(st.holidays.find((x) => x.id === h.id), data); });
+        toast(isNew ? 'Holiday added' : 'Saved');
+      },
+    });
+  }
+
+  function openBulkHolidayModal() {
+    modal({
+      title: 'Paste public holidays',
+      wide: true,
+      body: `
+        <p class="hint" style="margin:0">One per line: <code>date, name, state/region</code>. Leave the region off to apply to everyone.
+          Dates can be YYYY-MM-DD or DD/MM/YYYY.</p>
+        <label class="field">Holidays<textarea name="list" rows="9" placeholder="2027-01-26, Australia Day\n2027-03-08, Labour Day, VIC\n2027-03-08, Canberra Day, ACT"></textarea></label>`,
+      footer: saveFooter(),
+      onSubmit(fd) {
+        const items = [], bad = [];
+        for (const raw of String(fd.get('list') || '').split(/\r?\n/)) {
+          const line = raw.trim();
+          if (!line) continue;
+          const [d, name, region = ''] = line.split(/\s*[,\t;]\s*/);
+          let date = null;
+          if (/^\d{4}-\d{2}-\d{2}$/.test(d || '')) date = d;
+          else { const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(d || ''); if (m) date = `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
+          if (!date || isNaN(toDate(date)) || !name) { bad.push(line); continue; }
+          items.push({ id: uid(), date, name, region: region.trim(), recurring: false });
+        }
+        if (bad.length) return `Couldn't read ${bad.length} line(s), e.g. "${bad[0]}".`;
+        if (!items.length) return 'Paste at least one holiday.';
+        const key = (x) => `${x.date}|${x.name.toLowerCase()}|${x.region}`;
+        const existing = new Set(state.holidays.map(key));
+        const fresh = items.filter((x) => !existing.has(key(x)));
+        commit((st) => st.holidays.push(...fresh));
+        toast(`Added ${fresh.length} holiday${fresh.length === 1 ? '' : 's'}${items.length > fresh.length ? ` (${items.length - fresh.length} already existed)` : ''}`);
+      },
+    });
+  }
+
+  function openShutdownModal(x) {
+    const isNew = !x;
+    x = x || { name: '', start: todayStr(), end: addDays(todayStr(), 4), region: '' };
+    modal({
+      title: isNew ? 'Add shutdown' : 'Edit shutdown',
+      body: `
+        <label class="field">Name<input name="name" value="${esc(x.name)}" required placeholder="e.g. End-of-year shutdown"></label>
+        <div class="grid2">
+          <label class="field">First day<input type="date" name="start" value="${x.start}" required></label>
+          <label class="field">Last day<input type="date" name="end" value="${x.end}" required></label>
+        </div>
+        ${regionField(x.region)}`,
+      footer: saveFooter(isNew ? '' : '<button type="button" class="btn danger" id="delShut">Delete</button>'),
+      mount(form) {
+        if (isNew) return;
+        $('#delShut', form).addEventListener('click', () => {
+          commit((st) => { st.shutdowns = st.shutdowns.filter((y) => y.id !== x.id); });
+          closeModal(); toast('Shutdown deleted — Ctrl+Z to undo');
+        });
+      },
+      onSubmit(fd) {
+        const name = (fd.get('name') || '').trim();
+        let start = fd.get('start'), end = fd.get('end');
+        if (!name) return 'Name is required.';
+        if (!start || !end) return 'Please choose both dates.';
+        if (end < start) [start, end] = [end, start];
+        const data = { name, start, end, region: (fd.get('region') || '').trim() };
+        commit((st) => { if (isNew) st.shutdowns.push({ id: uid(), ...data }); else Object.assign(st.shutdowns.find((y) => y.id === x.id), data); });
+        toast(isNew ? 'Shutdown added' : 'Saved');
+      },
+    });
   }
 
   // ---------------------------------------------------------------- modals
@@ -581,7 +788,18 @@
               const selfHours = self && self.personId === p.id && self.type === 'task' ? hoursInRange(self, s, e) : 0;
               const free = st.capacity - (st.scheduled - selfHours);
               msg += ` · ${esc(p.name.split(' ')[0])} has <b>${hrs(Math.max(0, free))}</b> free in this range`;
-              if (wd * h > free + 1e-9) msg += ' <span style="color:var(--danger)">(over capacity)</span>';
+              if ((wd - st.closedDays) * h > free + 1e-9) msg += ' <span style="color:var(--danger)">(over capacity)</span>';
+            }
+            if (p) {
+              const names = [];
+              for (let d = s; d <= e; d = addDays(d, 1)) {
+                const c = !isWeekend(d) && closureFor(p, d);
+                if (c && !names.includes(c.name)) names.push(c.name);
+              }
+              if (names.length) {
+                msg += `<br><span class="hol-note">Includes ${names.map(esc).join(', ')} for ${esc(p.name.split(' ')[0])}.`
+                  + (off ? '' : ' You can still schedule work on those days, and those hours are counted.') + '</span>';
+              }
             }
             $('#allocSummary', form).innerHTML = msg;
           }
@@ -651,6 +869,8 @@
           <label class="field">Department<input name="dept" value="${esc(p.dept)}" list="deptList" placeholder="e.g. Design"></label>
         </div>
         <datalist id="deptList">${depts.map((d) => `<option value="${esc(d)}">`).join('')}</datalist>
+        <label class="field">State / region (for public holidays)<input name="region" value="${esc(p.region || '')}" list="regionList" placeholder="e.g. NSW, California, Ontario"></label>
+        <datalist id="regionList">${allRegions().map((r) => `<option value="${esc(r)}">`).join('')}</datalist>
         <label class="field">Work hours per day (Mon–Fri)<input type="number" name="capacity" min="0" max="24" step="0.5" value="${p.capacity}"></label>`,
       footer: saveFooter(isNew ? '' : `<button type="button" class="btn danger" id="delPerson">Delete</button>`),
       mount(form) {
@@ -667,7 +887,7 @@
         const capacity = +fd.get('capacity');
         if (!name) return 'Name is required.';
         if (!(capacity >= 0 && capacity <= 24)) return 'Hours per day must be between 0 and 24.';
-        const data = { name, role: (fd.get('role') || '').trim(), dept: (fd.get('dept') || '').trim(), capacity };
+        const data = { name, role: (fd.get('role') || '').trim(), dept: (fd.get('dept') || '').trim(), region: (fd.get('region') || '').trim(), capacity };
         commit((st) => { if (isNew) st.people.push({ id: uid(), ...data }); else Object.assign(st.people.find((x) => x.id === p.id), data); });
         toast(isNew ? 'Person added' : 'Saved');
       },
@@ -840,6 +1060,11 @@
       case 'edit-person': openPersonModal(findPerson(t.dataset.id)); break;
       case 'new-project': openProjectModal(null); break;
       case 'edit-project': openProjectModal(findProject(t.dataset.id)); break;
+      case 'new-holiday': openHolidayModal(null); break;
+      case 'edit-holiday': openHolidayModal(state.holidays.find((h) => h.id === t.dataset.id)); break;
+      case 'bulk-holidays': openBulkHolidayModal(); break;
+      case 'new-shutdown': openShutdownModal(null); break;
+      case 'edit-shutdown': openShutdownModal(state.shutdowns.find((x) => x.id === t.dataset.id)); break;
       case 'view-project': ui.projectFilter = t.dataset.id; ui.view = 'schedule'; render(); break;
       case 'undoBtn': undo(); break;
       case 'redoBtn': redo(); break;
@@ -855,6 +1080,7 @@
     const id = e.target.id;
     if (id === 'projectFilter') { ui.projectFilter = e.target.value; render(); }
     else if (id === 'groupToggle') { ui.groupByDept = e.target.checked; render(); }
+    else if (id === 'holRegion') { ui.holRegion = e.target.value; render(); }
     else if (id === 'showArchived') { ui.showArchived = e.target.checked; render(); }
     else if (id === 'repStart' || id === 'repEnd') {
       const s = $('#repStart').value, en = $('#repEnd').value;
@@ -894,10 +1120,10 @@
       download(`crewplan-schedule-${todayStr()}.csv`, lines.join('\n'), 'text/csv'); toast('CSV exported');
     } else if (action === 'sample') {
       if (!confirm('Replace current data with sample data?')) return;
-      commit((st) => Object.assign(st, seed())); toast('Sample data loaded — Ctrl+Z to undo');
+      commit((st) => Object.assign(st, normalize(seed()))); toast('Sample data loaded — Ctrl+Z to undo');
     } else if (action === 'clear') {
       if (!confirm('Delete all people, projects and allocations?')) return;
-      commit((st) => Object.assign(st, { people: [], projects: [], allocations: [] })); toast('Cleared — Ctrl+Z to undo');
+      commit((st) => Object.assign(st, { people: [], projects: [], allocations: [], holidays: [], shutdowns: [] })); toast('Cleared — Ctrl+Z to undo');
     }
   }
 
@@ -908,7 +1134,7 @@
     try {
       const data = JSON.parse(await file.text());
       if (!validData(data)) throw new Error('bad shape');
-      commit((st) => Object.assign(st, { people: data.people, projects: data.projects, allocations: data.allocations }));
+      commit((st) => Object.assign(st, normalize({ people: data.people, projects: data.projects, allocations: data.allocations, holidays: data.holidays, shutdowns: data.shutdowns })));
       toast('Data imported');
     } catch { toast('That file is not valid Crewplan data'); }
   });

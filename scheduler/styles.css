@@ -17,6 +17,9 @@
   --over: rgba(214, 69, 69, 0.10);
   --shadow: 0 10px 30px rgba(20, 30, 50, 0.18);
   --side: 230px;
+  --shut: #8a6fd1;
+  --hol-bg: rgba(224, 161, 6, 0.16);
+  --shut-bg: rgba(138, 111, 209, 0.16);
   --radius: 8px;
   color-scheme: light;
 }
@@ -35,6 +38,8 @@
     --gridline: rgba(255, 255, 255, 0.06);
     --today: rgba(109, 147, 255, 0.12);
     --over: rgba(240, 90, 90, 0.16);
+    --hol-bg: rgba(240, 180, 40, 0.16);
+    --shut-bg: rgba(160, 135, 230, 0.18);
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     color-scheme: dark;
   }
@@ -194,6 +199,15 @@ main.no-scroll { overflow: hidden; display: flex; }
 .load.under { background: var(--ok); opacity: .55; }
 .load.full { background: var(--accent); opacity: .7; }
 .load.over { background: var(--danger); }
+.closed-col { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+.closed-col.holiday { background: repeating-linear-gradient(135deg, var(--hol-bg) 0 5px, transparent 5px 10px); }
+.closed-col.shutdown { background: repeating-linear-gradient(135deg, var(--shut-bg) 0 5px, transparent 5px 10px); }
+.load.hol { background: var(--warn); }
+.hd.has-hol { box-shadow: inset 0 -3px 0 var(--warn); }
+.hd.has-shut { box-shadow: inset 0 -3px 0 var(--shut); }
+.hol-dot { background: var(--warn); }
+.shut-dot { background: var(--shut); }
+.hol-note { color: #b07a00; }
 .load-hit { position: absolute; bottom: 0; height: 9px; }
 
 .bar {
@@ -296,6 +310,8 @@ tbody tr:hover { background: var(--panel-2); }
   opacity: 0; pointer-events: none; transition: .2s; z-index: 200; box-shadow: var(--shadow);
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (prefers-color-scheme: dark) { .hol-note { color: #f0b429; } }
 
 @media (max-width: 720px) {
   :root { --side: 150px; }
