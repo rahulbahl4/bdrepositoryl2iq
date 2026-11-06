@@ -58,15 +58,37 @@
     zoom: 0,
     search: '',
     projectFilter: '',
-    groupByDept: true,
+    groupBy: 'discipline', // 'none' | 'discipline' | 'project'
     reportStart: monthStart(todayStr()),
     reportEnd: monthEnd(todayStr()),
   }, loadUI());
   ui.viewStart = startOfWeek(ui.viewStart);
+  if (!['none', 'discipline', 'project'].includes(ui.groupBy)) ui.groupBy = ui.groupByDept === false ? 'none' : 'discipline';
+  delete ui.groupByDept;
   normalize(state);
   function normalize(d) {
     if (!Array.isArray(d.holidays)) d.holidays = [];
     if (!Array.isArray(d.shutdowns)) d.shutdowns = [];
+    if (!Array.isArray(d.disciplines)) d.disciplines = [];
+    // Older data stored a free-text "dept" on each person; turn those into disciplines.
+    for (const person of d.people) {
+      if ('dept' in person) {
+        const name = (person.dept || '').trim();
+        if (name && !person.disciplineId) {
+          let disc = d.disciplines.find((x) => x.name.toLowerCase() === name.toLowerCase());
+          if (!disc) { disc = { id: uid(), name }; d.disciplines.push(disc); }
+          person.disciplineId = disc.id;
+        }
+        delete person.dept;
+      }
+      if (person.disciplineId && !d.disciplines.some((x) => x.id === person.disciplineId)) person.disciplineId = '';
+    }
+    for (const pr of d.projects) {
+      if (!Array.isArray(pr.phases)) pr.phases = [];
+      if (!(pr.budgetHours > 0)) pr.budgetHours = null;
+      pr.start = pr.start || '';
+      pr.end = pr.end || '';
+    }
     return d;
   }
   const undoStack = [], redoStack = [];
@@ -83,8 +105,8 @@
   function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* storage unavailable */ } }
   function loadUI() { try { return JSON.parse(localStorage.getItem(UI_KEY)) || {}; } catch { return {}; } }
   function saveUI() {
-    const { view, zoom, groupByDept, viewStart } = ui;
-    try { localStorage.setItem(UI_KEY, JSON.stringify({ view, zoom, groupByDept, viewStart })); } catch { /* ignore */ }
+    const { view, zoom, groupBy, viewStart } = ui;
+    try { localStorage.setItem(UI_KEY, JSON.stringify({ view, zoom, groupBy, viewStart })); } catch { /* ignore */ }
   }
   function commit(mutator, { rerender = true } = {}) {
     undoStack.push(JSON.stringify(state));
@@ -118,27 +140,38 @@
 
   // ---------------------------------------------------------------- sample data
   function seed() {
-    const P = (name, role, dept, region, capacity = 8) => ({ id: uid(), name, role, dept, region, capacity });
+    const disciplines = ['Design', 'Engineering', 'Project Management', 'QA', 'Marketing'].map((name) => ({ id: uid(), name }));
+    const D = (name) => disciplines.find((x) => x.name === name).id;
+    const P = (name, role, disc, region, capacity = 8) => ({ id: uid(), name, role, disciplineId: D(disc), region, capacity });
     const people = [
       P('Ava Thompson', 'Design Lead', 'Design', 'NSW'),
       P('Liam Carter', 'Product Designer', 'Design', 'VIC'),
       P('Noah Patel', 'Frontend Engineer', 'Engineering', 'VIC'),
       P('Mia Chen', 'Backend Engineer', 'Engineering', 'NSW'),
       P('Ethan Brooks', 'Full-stack Engineer', 'Engineering', 'QLD', 6),
-      P('Lucas Kim', 'QA Engineer', 'Engineering', 'VIC'),
-      P('Sofia Rossi', 'Project Manager', 'Delivery', 'NSW'),
+      P('Lucas Kim', 'QA Engineer', 'QA', 'VIC'),
+      P('Sofia Rossi', 'Project Manager', 'Project Management', 'NSW'),
       P('Zoe Martin', 'Content Strategist', 'Marketing', 'QLD', 4),
     ];
-    const Pr = (name, client, color, billable = true) => ({ id: uid(), name, client, color, billable, archived: false });
+    const w = startOfWeek(todayStr());
+    const Ph = (name, s, e) => ({ id: uid(), name, start: addDays(w, s), end: addDays(w, e) });
+    const Pr = (name, client, color, billable = true, extra = {}) => ({
+      id: uid(), name, client, color, billable, archived: false, start: '', end: '', budgetHours: null, phases: [], ...extra,
+    });
     const projects = [
-      Pr('Website Redesign', 'Northwind', COLORS[0]),
-      Pr('Mobile App v2', 'Globex', COLORS[1]),
-      Pr('Brand Refresh', 'Initech', COLORS[2]),
-      Pr('Data Platform', 'Umbrella', COLORS[4]),
+      Pr('Website Redesign', 'Northwind', COLORS[0], true, {
+        start: addDays(w, -7), end: addDays(w, 41), budgetHours: 900,
+        phases: [Ph('Discovery', -7, 4), Ph('Design', 0, 18), Ph('Build', 7, 32), Ph('Launch', 35, 41)],
+      }),
+      Pr('Mobile App v2', 'Globex', COLORS[1], true, {
+        start: addDays(w, -7), end: addDays(w, 60), budgetHours: 1400,
+        phases: [Ph('Alpha', -7, 18), Ph('Beta', 21, 46), Ph('Release', 49, 60)],
+      }),
+      Pr('Brand Refresh', 'Initech', COLORS[2], true, { start: addDays(w, 7), end: addDays(w, 32), budgetHours: 200, phases: [Ph('Concepts', 7, 18), Ph('Refinement', 21, 32)] }),
+      Pr('Data Platform', 'Umbrella', COLORS[4], true, { budgetHours: 600 }),
       Pr('Launch Campaign', 'Northwind', COLORS[3]),
       Pr('Internal Tools', 'In-house', COLORS[9], false),
     ];
-    const w = startOfWeek(todayStr());
     const A = (pi, pj, s, len, h, extra = {}) => ({
       id: uid(), type: 'task', personId: people[pi].id, projectId: projects[pj].id,
       start: addDays(w, s), end: addDays(w, s + len - 1), hoursPerDay: h, notes: '', tentative: false, ...extra,
@@ -174,7 +207,7 @@
     const shutdowns = [
       { id: uid(), name: 'End-of-year shutdown', start: `${year}-12-24`, end: `${+year + 1}-01-02`, region: '' },
     ];
-    return { people, projects, allocations, holidays, shutdowns };
+    return { people, projects, allocations, holidays, shutdowns, disciplines };
   }
 
   // ---------------------------------------------------------------- calculations
@@ -196,6 +229,20 @@
   }
   const closureFor = (person, day) => closuresOn(day).find((c) => appliesTo(c, person)) || null;
   const closureLabel = (c) => `${c.kind === 'shutdown' ? 'Shutdown' : 'Public holiday'}: ${c.name}${c.region ? ` (${c.region})` : ''}`;
+  // ----- disciplines & project budgets
+  const findDiscipline = (id) => state.disciplines.find((x) => x.id === id);
+  const discName = (p) => (findDiscipline(p.disciplineId) || {}).name || '';
+  const sortedDisciplines = () => [...state.disciplines].sort((a, b) => a.name.localeCompare(b.name));
+  const projectUsed = (pr) => state.allocations.reduce((sum, a) => sum + (a.projectId === pr.id && a.type === 'task' ? hoursInRange(a, a.start, a.end) : 0), 0);
+  const outsideProject = (a, pr) => !!pr && a.type === 'task' && ((pr.start && a.start < pr.start) || (pr.end && a.end > pr.end));
+  const projectDatesLabel = (pr) => (pr.start && pr.end ? rangeLabel(pr.start, pr.end) : pr.start ? `From ${shortDate(pr.start)}` : pr.end ? `Until ${shortDate(pr.end)}` : '');
+  function budgetMeter(pr, used = projectUsed(pr)) {
+    if (!pr.budgetHours) return `<span class="hint">${hrs(used)} · no budget</span>`;
+    const u = (used / pr.budgetHours) * 100;
+    return `<div class="hbar" title="${hrs(used)} scheduled of ${hrs(pr.budgetHours)} budget"><div class="meter ${u > 100.5 ? 'over' : u >= 99.5 ? 'full' : ''}"><i style="width:${Math.min(100, u)}%"></i></div>`
+      + `<span class="${u > 100.5 ? 'over-text' : ''}">${round1(used)} / ${round1(pr.budgetHours)}h</span></div>`;
+  }
+
   function allRegions() {
     return [...new Set([...state.people.map((p) => p.region), ...state.holidays.map((h) => h.region), ...state.shutdowns.map((x) => x.region)].filter(Boolean))].sort();
   }
@@ -253,7 +300,7 @@
   // ----- schedule
   function visiblePeople() {
     const q = ui.search.trim().toLowerCase();
-    let list = state.people.filter((p) => !q || `${p.name} ${p.role} ${p.dept}`.toLowerCase().includes(q));
+    let list = state.people.filter((p) => !q || `${p.name} ${p.role} ${discName(p)}`.toLowerCase().includes(q));
     if (ui.projectFilter) {
       const ids = new Set(state.allocations.filter((a) => a.projectId === ui.projectFilter).map((a) => a.personId));
       list = list.filter((p) => ids.has(p.id));
@@ -276,7 +323,9 @@
       <span class="spacer"></span>
       <input type="search" id="searchInput" placeholder="Search people…" value="${esc(ui.search)}">
       <select id="projectFilter"><option value="">All projects</option>${projOpts}</select>
-      <label class="toggle"><input type="checkbox" id="groupToggle" ${ui.groupByDept ? 'checked' : ''}> Group by department</label>`;
+      <label class="toggle">Group by <select id="groupBy">
+        ${[['none', 'None'], ['discipline', 'Discipline'], ['project', 'Project']].map(([v, l]) => `<option value="${v}" ${ui.groupBy === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></label>`;
   }
 
   function renderSchedule() {
@@ -326,20 +375,23 @@
     }).join('');
 
     const people = visiblePeople();
-    const groups = new Map();
-    for (const p of people) {
-      const key = ui.groupByDept ? (p.dept || 'No department') : '';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(p);
-    }
-    const groupKeys = [...groups.keys()].sort((a, b) => a.localeCompare(b));
-
     const bgStyle = `background-image: repeating-linear-gradient(to right, var(--gridline) 0 1px, transparent 1px ${dayW}px), linear-gradient(to right, transparent 0 ${5 * dayW}px, var(--weekend) ${5 * dayW}px ${7 * dayW}px); background-size: ${dayW}px 100%, ${7 * dayW}px 100%;`;
+    const ctx = { dayW, days, vs, rangeEnd, dayList, todayIdx, width, bgStyle };
     let rows = '';
-    for (const key of groupKeys) {
-      const members = groups.get(key);
-      if (ui.groupByDept) rows += `<div class="group"><div class="group-side">${esc(key)}<span>${members.length}</span></div><div style="width:${width}px"></div></div>`;
-      for (const p of members) rows += renderRow(p, { dayW, days, vs, rangeEnd, dayList, todayIdx, width, bgStyle });
+    if (ui.groupBy === 'project') rows = renderProjectGroups(people, ctx);
+    else {
+      const groups = new Map();
+      for (const p of people) {
+        const key = ui.groupBy === 'discipline' ? (discName(p) || 'No discipline') : '';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(p);
+      }
+      const keys = [...groups.keys()].sort((a, b) => (a === 'No discipline') - (b === 'No discipline') || a.localeCompare(b));
+      for (const key of keys) {
+        const members = groups.get(key);
+        if (ui.groupBy === 'discipline') rows += `<div class="group"><div class="group-side">${esc(key)}<span>${members.length}</span></div><div style="width:${width}px"></div></div>`;
+        for (const p of members) rows += renderRow(p, ctx);
+      }
     }
     if (!state.people.length) {
       rows = `<div class="empty-state"><h3>No people yet</h3><p>Add your team to start scheduling.</p><button class="btn primary" data-act="new-person">+ Add person</button></div>`;
@@ -363,14 +415,74 @@
     sched.scrollTop = keepTop;
   }
 
-  function renderRow(p, { dayW, days, vs, rangeEnd, dayList, todayIdx, width, bgStyle }) {
-    const allocs = state.allocations.filter((a) => a.personId === p.id && a.end >= vs && a.start <= rangeEnd);
-    const { lanes, count } = assignLanes(allocs);
+  // Project grouping: a heading per project (dates, phases, budget), then each person booked on it.
+  function renderProjectGroups(people, ctx) {
+    const { vs, rangeEnd, width } = ctx;
+    const inView = (a) => a.end >= vs && a.start <= rangeEnd;
+    const visible = new Set(people.map((p) => p.id));
+    const searching = !!ui.search.trim();
+    const projects = state.projects.filter((pr) => {
+      if (ui.projectFilter && pr.id !== ui.projectFilter) return false;
+      const booked = state.allocations.some((a) => a.projectId === pr.id && inView(a));
+      const datesInView = !pr.archived && (pr.start || pr.end) && (pr.end || '9999') >= vs && (pr.start || '0000') <= rangeEnd;
+      return booked || datesInView;
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    let out = '';
+    for (const pr of projects) {
+      const members = people.filter((p) => state.allocations.some((a) => a.personId === p.id && a.projectId === pr.id && inView(a)));
+      if (searching && !members.length) continue;
+      out += renderProjectHeader(pr, members.length, ctx);
+      for (const p of members) out += renderRow(p, ctx, pr.id);
+    }
+    if (!ui.projectFilter) {
+      const free = people.filter((p) => visible.has(p.id) && !state.allocations.some((a) => a.personId === p.id && a.type === 'task' && inView(a)));
+      if (free.length) {
+        out += `<div class="group"><div class="group-side">Not on a project in this view<span>${free.length}</span></div><div style="width:${width}px"></div></div>`;
+        for (const p of free) out += renderRow(p, ctx, '');
+      }
+    }
+    return out || '<div class="empty-state"><h3>No projects in view</h3><p>Nothing is booked in these dates.</p></div>';
+  }
+
+  function renderProjectHeader(pr, count, ctx) {
+    const { width, bgStyle, todayIdx, days, dayW } = ctx;
+    const band = (pr.start || pr.end) ? barGeom(pr.start || ctx.vs, pr.end || ctx.rangeEnd, ctx) : null;
+    const { lanes, count: laneCount } = assignLanes(pr.phases);
+    const height = 34 + Math.max(0, laneCount) * 22;
+    const phases = pr.phases.map((ph) => {
+      const g = barGeom(ph.start, ph.end, ctx);
+      if (!g) return '';
+      const outside = (pr.start && ph.start < pr.start) || (pr.end && ph.end > pr.end);
+      return `<div class="phase ${outside ? 'outside' : ''}" style="left:${g.left}px;width:${g.width}px;top:${32 + lanes.get(ph.id) * 22}px;--pc:${pr.color}"
+        title="${esc(`Phase: ${ph.name}\n${rangeLabel(ph.start, ph.end)} · ${workdays(ph.start, ph.end)} working days${outside ? '\nOutside the project dates' : ''}`)}">${esc(ph.name)}</div>`;
+    }).join('');
+    const today = todayIdx >= 0 && todayIdx < days ? `<div class="today-col" style="left:${todayIdx * dayW}px;width:${dayW}px"></div>` : '';
+    return `
+      <div class="group proj-group">
+        <div class="group-side proj-side" data-project-edit="${pr.id}" title="Edit ${esc(pr.name)}">
+          <div class="proj-name"><span class="dot" style="background:${pr.color}"></span>${esc(pr.name)}<span>${count}</span></div>
+          <div class="proj-meta">${esc(pr.client || '')}${pr.client && projectDatesLabel(pr) ? ' · ' : ''}${projectDatesLabel(pr)}</div>
+          ${budgetMeter(pr)}
+        </div>
+        <div class="ptrack" style="width:${width}px;height:${height}px;${bgStyle}">
+          ${today}
+          ${band ? `<div class="proj-band ${band.clipL ? 'clip-l' : ''} ${band.clipR ? 'clip-r' : ''}" style="left:${band.left}px;width:${band.width}px;--pc:${pr.color}" title="${esc(`${pr.name}: ${projectDatesLabel(pr)}`)}">${esc(projectDatesLabel(pr))}</div>` : '<div class="proj-nodates">No project dates set</div>'}
+          ${phases}
+        </div>
+      </div>`;
+  }
+
+  function renderRow(p, { dayW, days, vs, rangeEnd, dayList, todayIdx, width, bgStyle }, projectId) {
+    // Load and capacity always use all of a person's bookings; when shown under a project, only
+    // that project's bookings (plus time off) are drawn.
+    const allAllocs = state.allocations.filter((a) => a.personId === p.id && a.end >= vs && a.start <= rangeEnd);
+    const scoped = projectId === undefined ? allAllocs : allAllocs.filter((a) => a.type === 'timeoff' || a.projectId === projectId);
+    const { lanes, count } = assignLanes(scoped);
     const height = Math.max(MIN_ROW, PAD * 2 + LOAD_SPACE + Math.max(1, count) * LANE - 4);
 
     // daily load
     const sched = new Array(days).fill(0), off = new Array(days).fill(0);
-    for (const a of allocs) {
+    for (const a of allAllocs) {
       const s = maxS(a.start, vs), e = minS(a.end, rangeEnd);
       for (let i = diffDays(vs, s), n = diffDays(vs, e); i <= n; i++) {
         if (isWeekend(dayList[i])) continue;
@@ -403,7 +515,7 @@
       loadHtml += `<div class="load-hit" style="left:${i * dayW}px;width:${dayW}px" title="${esc(title)}"></div>`;
     }
 
-    const bars = allocs.map((a) => renderBar(a, lanes.get(a.id), { dayW, vs, rangeEnd })).join('');
+    const bars = scoped.map((a) => renderBar(a, lanes.get(a.id), { dayW, vs, rangeEnd })).join('');
     const today = todayIdx >= 0 && todayIdx < days ? `<div class="today-col" style="left:${todayIdx * dayW}px;width:${dayW}px"></div>` : '';
 
     const st = personStats(p, vs, rangeEnd);
@@ -415,14 +527,14 @@
           <div class="avatar" style="background:${color}">${esc(initials(p.name))}</div>
           <div class="who">
             <div class="name">${esc(p.name)}</div>
-            <div class="role">${esc(p.role || '')}${p.role ? ' · ' : ''}${p.region ? `${esc(p.region)} · ` : ''}${round1(p.capacity)}h/day</div>
+            <div class="role">${esc(p.role || discName(p))}${p.role || discName(p) ? ' · ' : ''}${p.region ? `${esc(p.region)} · ` : ''}${round1(p.capacity)}h/day</div>
             <div class="util" title="${hrs(st.scheduled)} scheduled of ${hrs(st.capacity)} capacity in view">
               <div class="meter ${meterCls}"><i style="width:${Math.min(100, st.util)}%"></i></div>
               <b class="${meterCls === 'over' ? 'over' : ''}">${pct(Math.min(st.util, 999))}</b>
             </div>
           </div>
         </div>
-        <div class="track" data-person="${p.id}" style="width:${width}px;height:${height}px;${bgStyle}">
+        <div class="track" data-person="${p.id}"${projectId !== undefined ? ` data-project="${projectId}"` : ''} style="width:${width}px;height:${height}px;${bgStyle}">
           ${today}${loadHtml}${bars}
         </div>
       </div>`;
@@ -444,11 +556,13 @@
     const total = hoursInRange(a, a.start, a.end);
     const sub = isOff ? 'Time off' : `${round1(a.hoursPerDay)}h/d${g.width > 150 ? ` · ${hrs(total)}` : ''}`;
     const dim = ui.projectFilter && a.projectId !== ui.projectFilter;
-    const cls = ['bar', isOff ? 'timeoff' : '', a.tentative ? 'tentative' : '', g.clipL ? 'clip-l' : '', g.clipR ? 'clip-r' : '', dim ? 'dim' : ''].join(' ');
-    const tip = `${title}${pr && pr.client ? ` (${pr.client})` : ''}\n${rangeLabel(a.start, a.end)} · ${round1(a.hoursPerDay)}h/day · ${hrs(total)} total${a.tentative ? '\nTentative' : ''}${a.notes && !isOff ? `\n${a.notes}` : ''}`;
+    const outside = outsideProject(a, pr);
+    const cls = ['bar', isOff ? 'timeoff' : '', a.tentative ? 'tentative' : '', g.clipL ? 'clip-l' : '', g.clipR ? 'clip-r' : '', dim ? 'dim' : '', outside ? 'outside' : ''].join(' ');
+    const tip = `${title}${pr && pr.client ? ` (${pr.client})` : ''}\n${rangeLabel(a.start, a.end)} · ${round1(a.hoursPerDay)}h/day · ${hrs(total)} total${a.tentative ? '\nTentative' : ''}`
+      + `${outside ? `\n⚠ Outside project dates (${projectDatesLabel(pr)})` : ''}${a.notes && !isOff ? `\n${a.notes}` : ''}`;
     return `<div class="${cls}" data-id="${a.id}" title="${esc(tip)}"
       style="left:${g.left}px;width:${g.width}px;top:${PAD + lane * LANE}px;${isOff ? '' : `background-color:${color}`}">
-      <span class="bar-title">${esc(title)}</span><span class="bar-sub">${esc(sub)}</span>
+      ${outside ? '<span class="warn-ic" aria-label="Outside project dates">!</span>' : ''}<span class="bar-title">${esc(title)}</span><span class="bar-sub">${esc(sub)}</span>
       <span class="h h-l"></span><span class="h h-r"></span>
     </div>`;
   }
@@ -466,25 +580,26 @@
       const total = allocs.reduce((s, a) => s + hoursInRange(a, a.start, a.end), 0);
       const upcoming = allocs.reduce((s, a) => s + hoursInRange(a, today, a.end), 0);
       const people = new Set(allocs.map((a) => a.personId)).size;
-      const span = allocs.length ? rangeLabel(allocs.reduce((m, a) => minS(m, a.start), allocs[0].start), allocs.reduce((m, a) => maxS(m, a.end), allocs[0].end)) : '—';
+      const outsideN = allocs.filter((a) => outsideProject(a, p)).length;
       return `<tr>
         <td><span class="dot" style="background:${p.color}"></span><b>${esc(p.name)}</b> ${p.archived ? '<span class="tag">Archived</span>' : ''}</td>
         <td>${esc(p.client || '—')}</td>
         <td>${p.billable ? '<span class="tag ok">Billable</span>' : '<span class="tag">Non-billable</span>'}</td>
         <td class="num">${people}</td>
-        <td>${span}</td>
+        <td>${projectDatesLabel(p) || '<span class="hint">Not set</span>'}${outsideN ? ` <span class="tag warn" title="Bookings outside the project dates">${outsideN} outside</span>` : ''}</td>
+        <td>${p.phases.length ? `<span title="${esc(p.phases.map((ph) => `${ph.name}: ${rangeLabel(ph.start, ph.end)}`).join('\n'))}">${p.phases.length}</span>` : '—'}</td>
+        <td>${budgetMeter(p, total)}</td>
         <td class="num">${hrs(upcoming)}</td>
-        <td class="num">${hrs(total)}</td>
         <td><div class="actions">
           <button class="btn sm" data-act="view-project" data-id="${p.id}">View schedule</button>
           <button class="btn sm" data-act="edit-project" data-id="${p.id}">Edit</button>
         </div></td></tr>`;
     }).join('');
     main.innerHTML = `<div class="page">
-      <h2>Projects</h2><p class="lede">Everything your team is working on, with scheduled hours.</p>
+      <h2>Projects</h2><p class="lede">Everything your team is working on: dates, phases, and scheduled hours against budget.</p>
       <div class="card"><div class="table-wrap"><table>
-        <thead><tr><th>Project</th><th>Client</th><th>Type</th><th class="num">People</th><th>Timeline</th><th class="num">Upcoming</th><th class="num">Total scheduled</th><th></th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="8" class="empty-state">No projects yet.</td></tr>'}</tbody>
+        <thead><tr><th>Project</th><th>Client</th><th>Type</th><th class="num">People</th><th>Dates</th><th>Phases</th><th>Budget used</th><th class="num">Upcoming</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="9" class="empty-state">No projects yet.</td></tr>'}</tbody>
       </table></div></div></div>`;
   }
 
@@ -492,7 +607,8 @@
   function renderPeople() {
     $('#schedule')?.remove();
     main.className = '';
-    toolbar.innerHTML = `<button class="btn primary" data-act="new-person">+ Add person</button>`;
+    toolbar.innerHTML = `<button class="btn primary" data-act="new-person">+ Add person</button>
+      <button class="btn" data-act="new-discipline">+ Discipline</button>`;
     const wk = startOfWeek(todayStr());
     const rows = [...state.people].sort((a, b) => a.name.localeCompare(b.name)).map((p) => {
       const thisWeek = personStats(p, wk, addDays(wk, 6));
@@ -501,7 +617,7 @@
       return `<tr>
         <td><div class="cell-person"><div class="avatar" style="background:${p.color || hashColor(p.name)}">${esc(initials(p.name))}</div><b>${esc(p.name)}</b></div></td>
         <td>${esc(p.role || '—')}</td>
-        <td>${esc(p.dept || '—')}</td>
+        <td>${esc(discName(p) || '—')}</td>
         <td>${esc(p.region || '—')}</td>
         <td class="num">${round1(p.capacity)}h</td>
         <td>${meter(thisWeek.util)}</td>
@@ -512,8 +628,16 @@
     main.innerHTML = `<div class="page">
       <h2>People</h2><p class="lede">Your team, their capacity, and how booked they are.</p>
       <div class="card"><div class="table-wrap"><table>
-        <thead><tr><th>Name</th><th>Role</th><th>Department</th><th>State / region</th><th class="num">Capacity/day</th><th>This week</th><th>Next 4 weeks</th><th class="num">Free (4 wks)</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Role</th><th>Discipline</th><th>State / region</th><th class="num">Capacity/day</th><th>This week</th><th>Next 4 weeks</th><th class="num">Free (4 wks)</th><th></th></tr></thead>
         <tbody>${rows || '<tr><td colspan="9" class="empty-state">No people yet.</td></tr>'}</tbody>
+      </table></div></div>
+      <div class="card"><h3>Disciplines</h3><div class="table-wrap"><table>
+        <thead><tr><th>Discipline</th><th class="num">People</th><th></th></tr></thead>
+        <tbody>${sortedDisciplines().map((d) => `<tr><td><b>${esc(d.name)}</b></td>
+          <td class="num">${state.people.filter((p) => p.disciplineId === d.id).length}</td>
+          <td><div class="actions"><button class="btn sm" data-act="rename-discipline" data-id="${d.id}">Rename</button>
+            <button class="btn sm danger" data-act="delete-discipline" data-id="${d.id}">Delete</button></div></td></tr>`).join('')
+          || '<tr><td colspan="3" class="hint">No disciplines yet. Add one, e.g. Design or Engineering.</td></tr>'}</tbody>
       </table></div></div></div>`;
   }
 
@@ -790,6 +914,22 @@
               msg += ` · ${esc(p.name.split(' ')[0])} has <b>${hrs(Math.max(0, free))}</b> free in this range`;
               if ((wd - st.closedDays) * h > free + 1e-9) msg += ' <span style="color:var(--danger)">(over capacity)</span>';
             }
+            const pr = !off && findProject(fd.get('projectId'));
+            if (pr) {
+              const self = isNew ? null : findAlloc(a.id);
+              const selfTotal = self && self.type === 'task' && self.projectId === pr.id ? hoursInRange(self, self.start, self.end) : 0;
+              const after = projectUsed(pr) - selfTotal + wd * h;
+              if (pr.budgetHours) {
+                const over = after > pr.budgetHours + 1e-9;
+                msg += `<br>${esc(pr.name)} budget: <b>${hrs(after)}</b> of ${hrs(pr.budgetHours)} after this booking`
+                  + (over ? ` <span style="color:var(--danger)">(${hrs(after - pr.budgetHours)} over budget)</span>` : ` · ${hrs(pr.budgetHours - after)} left`);
+              }
+              if (outsideProject({ type: 'task', start: s, end: e }, pr)) {
+                msg += `<br><span class="hol-note">⚠ Outside the project dates (${esc(projectDatesLabel(pr))}). You can still save it.</span>`;
+              }
+              const ph = pr.phases.filter((x) => x.start <= e && x.end >= s).map((x) => x.name);
+              if (ph.length) msg += `<br>Phase${ph.length > 1 ? 's' : ''}: ${ph.map(esc).join(', ')}`;
+            }
             if (p) {
               const names = [];
               for (let d = s; d <= e; d = addDays(d, 1)) {
@@ -816,7 +956,7 @@
         $('#quickProject', form).addEventListener('click', () => {
           const name = prompt('New project name');
           if (!name || !name.trim()) return;
-          const p = { id: uid(), name: name.trim(), client: '', color: COLORS[state.projects.length % COLORS.length], billable: true, archived: false };
+          const p = { id: uid(), name: name.trim(), client: '', color: COLORS[state.projects.length % COLORS.length], billable: true, archived: false, start: '', end: '', budgetHours: null, phases: [] };
           commit((st) => st.projects.push(p));
           const sel = form.projectId;
           if (sel.options.length === 1 && !sel.options[0].value) sel.innerHTML = '';
@@ -858,22 +998,29 @@
 
   function openPersonModal(p) {
     const isNew = !p;
-    p = p || { name: '', role: '', dept: '', capacity: 8 };
-    const depts = [...new Set(state.people.map((x) => x.dept).filter(Boolean))];
+    p = p || { name: '', role: '', disciplineId: '', capacity: 8 };
+    const discOpts = () => `<option value="">No discipline</option>${sortedDisciplines().map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}`;
     modal({
       title: isNew ? 'Add person' : 'Edit person',
       body: `
         <label class="field">Name<input name="name" value="${esc(p.name)}" required placeholder="e.g. Jordan Lee"></label>
         <div class="grid2">
           <label class="field">Role<input name="role" value="${esc(p.role)}" placeholder="e.g. Designer"></label>
-          <label class="field">Department<input name="dept" value="${esc(p.dept)}" list="deptList" placeholder="e.g. Design"></label>
+          <div class="field"><span>Discipline</span><div class="inline"><select name="disciplineId">${discOpts()}</select>
+            <button type="button" class="btn" id="quickDisc" title="Add a discipline">+ New</button></div></div>
         </div>
-        <datalist id="deptList">${depts.map((d) => `<option value="${esc(d)}">`).join('')}</datalist>
         <label class="field">State / region (for public holidays)<input name="region" value="${esc(p.region || '')}" list="regionList" placeholder="e.g. NSW, California, Ontario"></label>
         <datalist id="regionList">${allRegions().map((r) => `<option value="${esc(r)}">`).join('')}</datalist>
         <label class="field">Work hours per day (Mon–Fri)<input type="number" name="capacity" min="0" max="24" step="0.5" value="${p.capacity}"></label>`,
       footer: saveFooter(isNew ? '' : `<button type="button" class="btn danger" id="delPerson">Delete</button>`),
       mount(form) {
+        form.disciplineId.value = p.disciplineId || '';
+        $('#quickDisc', form).addEventListener('click', () => {
+          const d = addDiscipline();
+          if (!d) return;
+          form.disciplineId.innerHTML = discOpts();
+          form.disciplineId.value = d.id;
+        });
         if (isNew) return;
         $('#delPerson', form).addEventListener('click', () => {
           const n = state.allocations.filter((a) => a.personId === p.id).length;
@@ -887,7 +1034,7 @@
         const capacity = +fd.get('capacity');
         if (!name) return 'Name is required.';
         if (!(capacity >= 0 && capacity <= 24)) return 'Hours per day must be between 0 and 24.';
-        const data = { name, role: (fd.get('role') || '').trim(), dept: (fd.get('dept') || '').trim(), region: (fd.get('region') || '').trim(), capacity };
+        const data = { name, role: (fd.get('role') || '').trim(), disciplineId: fd.get('disciplineId') || '', region: (fd.get('region') || '').trim(), capacity };
         commit((st) => { if (isNew) st.people.push({ id: uid(), ...data }); else Object.assign(st.people.find((x) => x.id === p.id), data); });
         toast(isNew ? 'Person added' : 'Saved');
       },
@@ -896,14 +1043,33 @@
 
   function openProjectModal(p) {
     const isNew = !p;
-    p = p || { name: '', client: '', color: COLORS[state.projects.length % COLORS.length], billable: true, archived: false };
+    p = p || { name: '', client: '', color: COLORS[state.projects.length % COLORS.length], billable: true, archived: false, start: '', end: '', budgetHours: null, phases: [] };
+    const used = isNew ? 0 : projectUsed(p);
+    const phaseRow = (ph = { id: '', name: '', start: '', end: '' }) => `
+      <div class="phase-row" data-id="${ph.id}">
+        <input class="input" data-k="name" value="${esc(ph.name)}" placeholder="Phase name, e.g. Discovery (required)" aria-label="Phase name">
+        <input class="input" type="date" data-k="start" value="${ph.start}" aria-label="Phase start">
+        <input class="input" type="date" data-k="end" value="${ph.end}" aria-label="Phase end">
+        <button type="button" class="icon-btn" data-remove-phase title="Remove phase">&times;</button>
+      </div>`;
     const clients = [...new Set(state.projects.map((x) => x.client).filter(Boolean))];
     modal({
       title: isNew ? 'New project' : 'Edit project',
+      wide: true,
       body: `
         <label class="field">Project name<input name="name" value="${esc(p.name)}" required placeholder="e.g. Website Redesign"></label>
         <label class="field">Client<input name="client" value="${esc(p.client)}" list="clientList" placeholder="Optional"></label>
         <datalist id="clientList">${clients.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
+        <div class="grid2">
+          <label class="field">Start date<input type="date" name="start" value="${p.start}"></label>
+          <label class="field">End date<input type="date" name="end" value="${p.end}"></label>
+        </div>
+        <label class="field">Budgeted hours<input type="number" name="budgetHours" min="0" step="1" value="${p.budgetHours || ''}" placeholder="Optional, e.g. 400"></label>
+        <p class="summary" id="projSummary"></p>
+        <div class="field"><span>Phases</span>
+          <div id="phaseList" class="phase-list">${p.phases.map(phaseRow).join('')}</div>
+          <button type="button" class="btn sm" id="addPhase" style="justify-self:start">+ Add phase</button>
+        </div>
         <div class="field"><span>Color</span><div class="swatches">
           ${COLORS.map((c) => `<label style="background:${c}" title="${c}"><input type="radio" name="color" value="${c}" ${c === p.color ? 'checked' : ''}></label>`).join('')}
         </div></div>
@@ -913,6 +1079,26 @@
         </div>`,
       footer: saveFooter(isNew ? '' : `<button type="button" class="btn danger" id="delProject">Delete</button>`),
       mount(form) {
+        const list = $('#phaseList', form);
+        const sum = () => {
+          const b = +form.budgetHours.value;
+          const outsideN = isNew ? 0 : state.allocations.filter((a) => a.projectId === p.id && outsideProject(a, { start: form.start.value, end: form.end.value })).length;
+          let msg = `<b>${hrs(used)}</b> scheduled so far`;
+          if (b > 0) msg += used > b ? ` · <span style="color:var(--danger)">${hrs(used - b)} over budget</span>` : ` · ${hrs(b - used)} of ${hrs(b)} left`;
+          if (outsideN) msg += `<br><span class="hol-note">⚠ ${outsideN} booking${outsideN === 1 ? ' falls' : 's fall'} outside these dates. They're kept, just flagged.</span>`;
+          $('#projSummary', form).innerHTML = msg;
+        };
+        form.addEventListener('input', sum);
+        sum();
+        $('#addPhase', form).addEventListener('click', () => {
+          const last = [...list.querySelectorAll('[data-k="end"]')].map((i) => i.value).filter(Boolean).sort().pop();
+          const start = last ? addDays(last, 1) : (form.start.value || todayStr());
+          let end = addDays(start, 13);
+          if (form.end.value && end > form.end.value && form.end.value >= start) end = form.end.value;
+          list.insertAdjacentHTML('beforeend', phaseRow({ id: '', name: '', start, end }));
+          list.lastElementChild.querySelector('input').focus();
+        });
+        list.addEventListener('click', (ev) => { if (ev.target.closest('[data-remove-phase]')) ev.target.closest('.phase-row').remove(); });
         if (isNew) return;
         $('#delProject', form).addEventListener('click', () => {
           const n = state.allocations.filter((a) => a.projectId === p.id).length;
@@ -925,11 +1111,58 @@
       onSubmit(fd) {
         const name = (fd.get('name') || '').trim();
         if (!name) return 'Project name is required.';
-        const data = { name, client: (fd.get('client') || '').trim(), color: fd.get('color') || COLORS[0], billable: fd.get('billable') === 'on', archived: fd.get('archived') === 'on' };
+        let start = fd.get('start') || '', end = fd.get('end') || '';
+        if (start && end && end < start) [start, end] = [end, start];
+        const budgetRaw = fd.get('budgetHours');
+        const budgetHours = budgetRaw === '' || budgetRaw === null ? null : +budgetRaw;
+        if (budgetHours !== null && !(budgetHours >= 0)) return 'Budgeted hours must be a positive number.';
+        const phases = [];
+        for (const row of $('#phaseList', modalRoot).querySelectorAll('.phase-row')) {
+          const get = (k) => row.querySelector(`[data-k="${k}"]`).value.trim();
+          let ph = { id: row.dataset.id || uid(), name: get('name'), start: get('start'), end: get('end') };
+          if (!ph.name) continue; // unnamed rows (e.g. added by mistake) are ignored
+          if (!ph.start || !ph.end) return `Phase "${ph.name}" needs a start and end date.`;
+          if (ph.end < ph.start) ph = { ...ph, start: ph.end, end: ph.start };
+          phases.push(ph);
+        }
+        phases.sort((a, b) => (a.start < b.start ? -1 : 1));
+        const data = { name, client: (fd.get('client') || '').trim(), color: fd.get('color') || COLORS[0], billable: fd.get('billable') === 'on', archived: fd.get('archived') === 'on',
+          start, end, budgetHours: budgetHours || null, phases };
         commit((st) => { if (isNew) st.projects.push({ id: uid(), ...data }); else Object.assign(st.projects.find((x) => x.id === p.id), data); });
         toast(isNew ? 'Project created' : 'Saved');
       },
     });
+  }
+
+  function addDiscipline() {
+    const name = (prompt('New discipline name, e.g. Design') || '').trim();
+    if (!name) return null;
+    const existing = state.disciplines.find((d) => d.name.toLowerCase() === name.toLowerCase());
+    if (existing) { toast(`"${existing.name}" already exists`); return existing; }
+    const d = { id: uid(), name };
+    commit((st) => st.disciplines.push(d));
+    toast('Discipline added');
+    return d;
+  }
+  function renameDiscipline(id) {
+    const d = findDiscipline(id);
+    if (!d) return;
+    const name = (prompt('Rename discipline', d.name) || '').trim();
+    if (!name || name === d.name) return;
+    if (state.disciplines.some((x) => x.id !== id && x.name.toLowerCase() === name.toLowerCase())) { toast(`"${name}" already exists`); return; }
+    commit((st) => { st.disciplines.find((x) => x.id === id).name = name; });
+    toast('Discipline renamed');
+  }
+  function deleteDiscipline(id) {
+    const d = findDiscipline(id);
+    if (!d) return;
+    const n = state.people.filter((p) => p.disciplineId === id).length;
+    if (!confirm(`Delete "${d.name}"?${n ? ` ${n} ${n === 1 ? 'person' : 'people'} will have no discipline.` : ''}`)) return;
+    commit((st) => {
+      st.disciplines = st.disciplines.filter((x) => x.id !== id);
+      for (const p of st.people) if (p.disciplineId === id) p.disciplineId = '';
+    });
+    toast('Discipline deleted — Ctrl+Z to undo');
   }
 
   // ---------------------------------------------------------------- toast
@@ -962,7 +1195,7 @@
       e.preventDefault();
     } else if (track) {
       const d = dayAt(track, e.clientX);
-      drag = { mode: 'create', track, personId: track.dataset.person, d0: d, d1: d, x0: e.clientX, y0: e.clientY, moved: false };
+      drag = { mode: 'create', track, personId: track.dataset.person, projectId: track.dataset.project || '', d0: d, d1: d, x0: e.clientX, y0: e.clientY, moved: false };
       e.preventDefault();
     }
   });
@@ -1018,30 +1251,37 @@
     if (d.mode === 'create') {
       if (d.sel) d.sel.remove();
       const s = Math.min(d.d0, d.d1), en = Math.max(d.d0, d.d1);
-      openAllocModal({ personId: d.personId, start: addDays(ui.viewStart, s), end: addDays(ui.viewStart, en) }, true);
+      const extra = d.projectId ? { projectId: d.projectId } : {};
+      openAllocModal({ personId: d.personId, start: addDays(ui.viewStart, s), end: addDays(ui.viewStart, en), ...extra }, true);
       return;
     }
     if (!d.moved) { openAllocModal(d.a, false); return; }
     const personId = d.mode === 'move' ? d.targetTrack.dataset.person : d.a.personId;
-    if (d.newStart === d.a.start && d.newEnd === d.a.end && personId === d.a.personId) { render(); return; }
+    // Dropping onto a person's row under another project (Group by: Project) moves the booking to that project.
+    const targetProject = d.mode === 'move' && d.a.type === 'task' ? d.targetTrack.dataset.project : '';
+    const projectId = targetProject || d.a.projectId;
+    if (d.newStart === d.a.start && d.newEnd === d.a.end && personId === d.a.personId && projectId === d.a.projectId) { render(); return; }
     const copy = d.mode === 'move' && e.altKey;
+    const orig = { personId: d.a.personId, projectId: d.a.projectId }; // d.a is mutated by the commit below
     commit((st) => {
-      if (copy) st.allocations.push({ ...d.a, id: uid(), personId, start: d.newStart, end: d.newEnd });
-      else Object.assign(st.allocations.find((x) => x.id === d.a.id), { personId, start: d.newStart, end: d.newEnd });
+      if (copy) st.allocations.push({ ...d.a, id: uid(), personId, projectId, start: d.newStart, end: d.newEnd });
+      else Object.assign(st.allocations.find((x) => x.id === d.a.id), { personId, projectId, start: d.newStart, end: d.newEnd });
     });
     const who = findPerson(personId);
-    toast(copy ? 'Copied' : personId !== d.a.personId ? `Moved to ${who ? who.name : 'person'}` : `Rescheduled to ${rangeLabel(d.newStart, d.newEnd)}`);
+    const pr = findProject(projectId);
+    toast(copy ? 'Copied' : projectId !== orig.projectId ? `Moved to ${pr ? pr.name : 'project'}` : personId !== orig.personId ? `Moved to ${who ? who.name : 'person'}` : `Rescheduled to ${rangeLabel(d.newStart, d.newEnd)}`);
   });
   window.addEventListener('pointercancel', () => { if (drag) { drag.sel?.remove(); drag = null; render(); } });
 
   // ---------------------------------------------------------------- other events
   document.addEventListener('click', (e) => {
-    const t = e.target.closest('button, [data-person-edit]');
+    const t = e.target.closest('button, [data-person-edit], [data-project-edit]');
     if (!t) { $('#menuPop').hidden = true; return; }
     if (t.id !== 'menuBtn' && !t.closest('#menuPop')) $('#menuPop').hidden = true;
 
     if (t.dataset.view) { ui.view = t.dataset.view; render(); return; }
     if (t.dataset.personEdit) { openPersonModal(findPerson(t.dataset.personEdit)); return; }
+    if (t.dataset.projectEdit) { openProjectModal(findProject(t.dataset.projectEdit)); return; }
     if (t.dataset.zoom !== undefined) { ui.zoom = +t.dataset.zoom; render(); return; }
     if (t.dataset.preset) { setReportPreset(t.dataset.preset); return; }
     if (t.dataset.action) { menuAction(t.dataset.action); $('#menuPop').hidden = true; return; }
@@ -1057,6 +1297,9 @@
         break;
       }
       case 'new-person': openPersonModal(null); break;
+      case 'new-discipline': addDiscipline(); break;
+      case 'rename-discipline': renameDiscipline(t.dataset.id); break;
+      case 'delete-discipline': deleteDiscipline(t.dataset.id); break;
       case 'edit-person': openPersonModal(findPerson(t.dataset.id)); break;
       case 'new-project': openProjectModal(null); break;
       case 'edit-project': openProjectModal(findProject(t.dataset.id)); break;
@@ -1079,7 +1322,7 @@
   document.addEventListener('change', (e) => {
     const id = e.target.id;
     if (id === 'projectFilter') { ui.projectFilter = e.target.value; render(); }
-    else if (id === 'groupToggle') { ui.groupByDept = e.target.checked; render(); }
+    else if (id === 'groupBy') { ui.groupBy = e.target.value; render(); }
     else if (id === 'holRegion') { ui.holRegion = e.target.value; render(); }
     else if (id === 'showArchived') { ui.showArchived = e.target.checked; render(); }
     else if (id === 'repStart' || id === 'repEnd') {
@@ -1112,10 +1355,10 @@
     else if (action === 'import') $('#importFile').click();
     else if (action === 'csv') {
       const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-      const lines = [['Person', 'Department', 'Type', 'Project', 'Client', 'Start', 'End', 'Hours/day', 'Total hours', 'Tentative', 'Notes'].join(',')];
+      const lines = [['Person', 'Discipline', 'Type', 'Project', 'Client', 'Start', 'End', 'Hours/day', 'Total hours', 'Tentative', 'Notes'].join(',')];
       for (const a of [...state.allocations].sort((x, y) => (x.start < y.start ? -1 : 1))) {
         const p = findPerson(a.personId) || {}, pr = findProject(a.projectId) || {};
-        lines.push([p.name, p.dept, a.type === 'timeoff' ? 'Time off' : 'Project', pr.name, pr.client, a.start, a.end, a.hoursPerDay, hoursInRange(a, a.start, a.end), a.tentative ? 'yes' : '', a.notes].map(q).join(','));
+        lines.push([p.name, p.id ? discName(p) : '', a.type === 'timeoff' ? 'Time off' : 'Project', pr.name, pr.client, a.start, a.end, a.hoursPerDay, hoursInRange(a, a.start, a.end), a.tentative ? 'yes' : '', a.notes].map(q).join(','));
       }
       download(`crewplan-schedule-${todayStr()}.csv`, lines.join('\n'), 'text/csv'); toast('CSV exported');
     } else if (action === 'sample') {
@@ -1123,7 +1366,7 @@
       commit((st) => Object.assign(st, normalize(seed()))); toast('Sample data loaded — Ctrl+Z to undo');
     } else if (action === 'clear') {
       if (!confirm('Delete all people, projects and allocations?')) return;
-      commit((st) => Object.assign(st, { people: [], projects: [], allocations: [], holidays: [], shutdowns: [] })); toast('Cleared — Ctrl+Z to undo');
+      commit((st) => Object.assign(st, { people: [], projects: [], allocations: [], holidays: [], shutdowns: [], disciplines: [] })); toast('Cleared — Ctrl+Z to undo');
     }
   }
 
@@ -1134,7 +1377,7 @@
     try {
       const data = JSON.parse(await file.text());
       if (!validData(data)) throw new Error('bad shape');
-      commit((st) => Object.assign(st, normalize({ people: data.people, projects: data.projects, allocations: data.allocations, holidays: data.holidays, shutdowns: data.shutdowns })));
+      commit((st) => Object.assign(st, normalize({ people: data.people, projects: data.projects, allocations: data.allocations, holidays: data.holidays, shutdowns: data.shutdowns, disciplines: data.disciplines })));
       toast('Data imported');
     } catch { toast('That file is not valid Crewplan data'); }
   });

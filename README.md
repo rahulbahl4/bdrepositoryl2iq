@@ -19,10 +19,17 @@ A lightweight resource-planning app in the style of tools like Float: see who is
   - Shutdowns are date ranges, such as an end-of-year closure, for everyone or for one region.
   - These days are removed from capacity, but they **don't block scheduling**. Work placed on them is still allowed and still counted, and it gets an amber marker instead of an over-capacity warning. The Report shows the capacity removed and the hours worked on those days.
 - **Tentative** allocations appear as striped bars.
-- **Projects**: client, color, billable or non-billable, archived; upcoming and total scheduled hours. "View schedule" filters the timeline to a project.
-- **People**: role, department, capacity; utilization this week and for the next 4 weeks; free hours.
+- **Projects**: client, color, billable or non-billable, archived.
+  - **Start/end dates and budgeted hours.** You see budget used against remaining. Bookings outside the project dates get a dashed amber outline, and the booking form warns when a booking would go over budget or outside the dates. These are warnings only; nothing is blocked.
+  - **Phases**, each with a name and start/end dates (e.g. Discovery, Design, Build), shown as bands on the schedule when grouped by project.
+  - "View schedule" filters the timeline to a project.
+- **People**: role, discipline, state/region, capacity; utilization this week and for the next 4 weeks; free hours.
 - **Report**: capacity, scheduled, billable and non-billable hours, time off and utilization by person and by project, for any date range or preset.
-- Search, filter by project, group by department.
+- **Group by** None, Discipline or Project.
+  - Project grouping shows a heading row per project (dates, phases, budget used), then each person booked on it. A final group lists people with no project in view.
+  - Drag a booking onto a person's row under another project to move it to that project.
+- **Disciplines**: a managed list (add, rename, delete on the People page), picked from a dropdown on each person. Older free-text departments are converted automatically.
+- Search and filter by project.
 - Undo/redo (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z).
 - Data is saved in the browser (localStorage). You can export/import JSON, export the schedule as CSV, or load sample data.
 - Light and dark mode; works at phone width.

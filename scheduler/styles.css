@@ -243,7 +243,7 @@ main.no-scroll { overflow: hidden; display: flex; }
 .hint { color: var(--muted); font-size: 12px; }
 
 /* ---------- Pages (projects / people / report) ---------- */
-.page { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+.page { max-width: 1320px; margin: 0 auto; padding: 20px 16px 60px; }
 .page h2 { margin: 0 0 4px; font-size: 20px; }
 .page .lede { color: var(--muted); margin: 0 0 16px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 20px; }
@@ -324,4 +324,52 @@ tbody tr:hover { background: var(--panel-2); }
   .toolbar input[type=search] { width: 130px; }
   .side .avatar { display: none; }
   .grid2 { grid-template-columns: 1fr; }
+}
+
+/* ---------- Group by project ---------- */
+.proj-group { border-bottom: 1px solid var(--border-strong); }
+.group-side.proj-side {
+  text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 13px; color: var(--text);
+  display: grid; gap: 3px; align-content: start; padding: 8px 12px; cursor: pointer;
+}
+.group-side.proj-side:hover { background: var(--border); }
+.proj-name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proj-name span { color: var(--muted); font-weight: 500; margin-left: 6px; font-size: 12px; }
+.proj-meta { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proj-side .hbar { min-width: 0; font-size: 11px; color: var(--muted); }
+.proj-side .hbar .meter { height: 5px; }
+.ptrack { position: relative; flex: none; }
+.proj-band {
+  position: absolute; top: 6px; height: 20px; border-radius: 5px; padding: 0 8px;
+  font-size: 11px; font-weight: 600; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text);
+  background: color-mix(in srgb, var(--pc) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pc) 55%, transparent);
+}
+.proj-band.clip-l { border-left-style: dashed; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.proj-band.clip-r { border-right-style: dashed; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.proj-nodates { position: absolute; top: 8px; left: 10px; font-size: 12px; color: var(--muted); font-style: italic; }
+.phase {
+  position: absolute; height: 18px; border-radius: 4px; padding: 0 6px;
+  font-size: 11px; line-height: 18px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--pc) 75%, #000 10%);
+}
+.phase.outside { outline: 2px dashed var(--warn); outline-offset: -1px; }
+
+/* ---------- Budget / date warnings ---------- */
+.bar.outside { outline: 2px dashed var(--warn); outline-offset: 1px; }
+.warn-ic {
+  flex: none; width: 15px; height: 15px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--warn); color: #000; font-size: 10px; font-weight: 800;
+}
+.tag.warn { color: #9a6a00; border-color: var(--warn); }
+.over-text { color: var(--danger); font-weight: 600; }
+
+/* ---------- Phase editor ---------- */
+.phase-list { display: grid; gap: 6px; }
+.phase-row { display: grid; grid-template-columns: 1fr 140px 140px 32px; gap: 6px; align-items: center; }
+.phase-row .input { height: 34px; font-weight: 400; font-size: 14px; color: var(--text); min-width: 0; }
+@media (max-width: 720px) {
+  .phase-row { grid-template-columns: 1fr 1fr 32px; }
+  .phase-row [data-k="name"] { grid-column: 1 / -1; }
 }
