@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crewplan</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo" aria-hidden="true"></span>Crewplan</div>
+    <nav class="tabs" id="tabs">
+      <button data-view="schedule">Schedule</button>
+      <button data-view="projects">Projects</button>
+      <button data-view="people">People</button>
+      <button data-view="report">Report</button>
+    </nav>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="undoBtn" title="Undo (Ctrl+Z)">&#8630;</button>
+      <button class="icon-btn" id="redoBtn" title="Redo (Ctrl+Shift+Z)">&#8631;</button>
+      <div class="menu">
+        <button class="icon-btn" id="menuBtn" title="More">&#8943;</button>
+        <div class="menu-pop" id="menuPop" hidden>
+          <button data-action="export">Export data (JSON)</button>
+          <button data-action="import">Import data (JSON)</button>
+          <button data-action="csv">Export schedule (CSV)</button>
+          <hr>
+          <button data-action="sample">Load sample data</button>
+          <button data-action="clear" class="danger-text">Clear all data</button>
+        </div>
+      </div>
+    </div>
+  </header>
+  <div class="toolbar" id="toolbar"></div>
+  <main id="main"></main>
+  <div id="modalRoot"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <input type="file" id="importFile" accept="application/json,.json" hidden>
+  <script src="app.js"></script>
+</body>
+</html>
