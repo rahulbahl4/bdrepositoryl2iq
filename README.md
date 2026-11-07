@@ -28,6 +28,13 @@ A lightweight resource-planning app in the style of tools like Float: see who is
   - **Start/end dates and budgeted hours.** You see budget used against remaining. Bookings outside the project dates get a dashed amber outline, and the booking form warns when a booking would go over budget or outside the dates. These are warnings only; nothing is blocked.
   - **Phases**, each with a name and start/end dates (e.g. Discovery, Design, Build), shown as bands on the schedule when grouped by project.
   - "View schedule" filters the timeline to a project.
+- **Pipeline (potential wins)**: model bids before they land, without touching anyone's real workload.
+  - Any project can be Confirmed or Pipeline, with a win chance, an expected decision date and a stage (Bidding or Shortlisted).
+  - **Unfilled slots** set out the people a job needs before anyone is named (e.g. 2 × Controls Engineering, 8h/day). They show as dashed bars on the schedule.
+  - Click a slot to see **who could fill it**: people ranked by discipline and free time, with warnings about overbooking, leave and holidays. Click **Assign**, or drag the slot onto a person.
+  - A **Show** switch on the Schedule, People and Report pages chooses between *Confirmed only* (the default), *Confirmed + pipeline* and *Weighted by win chance*.
+  - The **Pipeline page** lists every bid with its win chance, decision date, hours needed by discipline, how much is filled and who would be overbooked. Buttons mark a bid **Won** (optionally moving its dates; bookings become firm and unfilled slots stay flagged) or **Lost** (kept for the record, hidden from the schedule, can be reopened).
+  - New projects can **copy phases and staffing from an existing job**. Its bookings become unfilled slots by discipline, moved to the new start date.
 - **People**: role, discipline, state/region, capacity; utilization this week and for the next 4 weeks; free hours.
 - **Report**: capacity, scheduled, billable and non-billable hours, time off and utilization by person and by project, for any date range or preset.
 - **Group by** None, Discipline or Project.

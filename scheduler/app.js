@@ -51,6 +51,7 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const $ = (sel, root = document) => root.querySelector(sel);
   const round1 = (n) => Math.round(n * 10) / 10;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const hrs = (n) => `${round1(n)}h`;
   const pct = (n) => `${Math.round(n)}%`;
   const initials = (name) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
@@ -66,12 +67,14 @@
     search: '',
     projectFilter: '',
     groupBy: 'discipline', // 'none' | 'discipline' | 'project'
+    scenario: 'confirmed', // 'confirmed' | 'all' | 'weighted' (how pipeline projects are counted)
     reportStart: monthStart(todayStr()),
     reportEnd: monthEnd(todayStr()),
   }, loadUI());
   ui.viewStart = startOfWeek(ui.viewStart);
   if (!['none', 'discipline', 'project'].includes(ui.groupBy)) ui.groupBy = ui.groupByDept === false ? 'none' : 'discipline';
   delete ui.groupByDept;
+  if (!['confirmed', 'all', 'weighted'].includes(ui.scenario)) ui.scenario = 'confirmed';
   normalize(state);
   function normalize(d) {
     if (!Array.isArray(d.holidays)) d.holidays = [];
@@ -95,6 +98,17 @@
       if (!(pr.budgetHours > 0)) pr.budgetHours = null;
       pr.start = pr.start || '';
       pr.end = pr.end || '';
+      // Pipeline fields: a project is confirmed, a pipeline bid (with a win chance), or lost.
+      if (!['confirmed', 'pipeline', 'lost'].includes(pr.status)) pr.status = 'confirmed';
+      pr.winChance = Number.isFinite(+pr.winChance) ? clamp(Math.round(+pr.winChance), 0, 100) : 50;
+      if (!['Bidding', 'Shortlisted'].includes(pr.stage)) pr.stage = 'Bidding';
+      pr.decisionDate = pr.decisionDate || '';
+    }
+    // An allocation with no person is an unfilled slot: demand for a discipline, not yet named.
+    for (const a of d.allocations) {
+      if (!a.personId) a.personId = null;
+      if (a.personId || a.type !== 'task') delete a.disciplineId;
+      else a.disciplineId = d.disciplines.some((x) => x.id === a.disciplineId) ? a.disciplineId : '';
     }
     return d;
   }
@@ -112,8 +126,8 @@
   function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* storage unavailable */ } }
   function loadUI() { try { return JSON.parse(localStorage.getItem(UI_KEY)) || {}; } catch { return {}; } }
   function saveUI() {
-    const { view, zoom, groupBy, viewStart } = ui;
-    try { localStorage.setItem(UI_KEY, JSON.stringify({ view, zoom, groupBy, viewStart })); } catch { /* ignore */ }
+    const { view, zoom, groupBy, viewStart, scenario } = ui;
+    try { localStorage.setItem(UI_KEY, JSON.stringify({ view, zoom, groupBy, viewStart, scenario })); } catch { /* ignore */ }
   }
   function commit(mutator, { rerender = true } = {}) {
     undoStack.push(JSON.stringify(state));
@@ -182,6 +196,22 @@
       Pr('Mine Site Telemetry', 'Red Ridge Mining', COLORS[4], true, { budgetHours: 600 }),
       Pr('Pump Station Upgrades', 'Metro Water', COLORS[3]),
       Pr('Service & Support', 'In-house', COLORS[9], false),
+      // Pipeline bids: modelled with unfilled slots, not yet confirmed.
+      Pr('Desalination Plant Controls', 'Coastal Water', COLORS[5], true, {
+        status: 'pipeline', winChance: 60, stage: 'Shortlisted', decisionDate: addDays(todayStr(), 12),
+        start: addDays(w, 21), end: addDays(w, 88), budgetHours: 1100,
+        phases: [Ph('Design', 21, 39), Ph('Integration', 42, 67), Ph('FAT', 70, 74), Ph('SAT', 81, 88)],
+      }),
+      Pr('Hospital BMS Integration', 'St Clare Health', COLORS[8], true, {
+        status: 'pipeline', winChance: 80, stage: 'Shortlisted', decisionDate: addDays(todayStr(), 5),
+        start: addDays(w, 14), end: addDays(w, 53), budgetHours: 420,
+        phases: [Ph('Design', 14, 25), Ph('Integration', 28, 46), Ph('SAT', 49, 53)],
+      }),
+      Pr('Airport Baggage PLC Upgrade', 'Metro Airports', COLORS[7], true, {
+        status: 'pipeline', winChance: 30, stage: 'Bidding', decisionDate: addDays(todayStr(), 26),
+        start: addDays(w, 35), end: addDays(w, 102), budgetHours: 1300,
+        phases: [Ph('Design', 35, 53), Ph('Integration', 56, 88), Ph('FAT', 91, 95), Ph('SAT', 98, 102)],
+      }),
     ];
     const A = (pi, pj, s, len, h, extra = {}) => ({
       id: uid(), type: 'task', personId: people[pi].id, projectId: projects[pj].id,
@@ -201,7 +231,20 @@
       A(6, 0, -7, 47, 2), A(6, 1, -7, 47, 2), A(6, 3, -7, 47, 2),
       A(7, 4, 0, 19, 4), A(7, 2, 21, 12, 2),
       T(2, 30, 5), T(6, 14, 3, 'Conference'), T(4, 7, 1, 'Sick day'), T(0, 42, 5),
+      // Pipeline staffing: some named (tentative), the rest unfilled slots by discipline.
+      A(2, 6, 42, 26, 6, { notes: 'Pencilled in for PLC work if we win' }), A(3, 7, 28, 19, 6),
     ];
+    const S = (disc, pj, s, len, h, notes = '') => ({
+      id: uid(), type: 'task', personId: null, disciplineId: D(disc), projectId: projects[pj].id,
+      start: addDays(w, s), end: addDays(w, s + len - 1), hoursPerDay: h, notes, tentative: false,
+    });
+    allocations.push(
+      S('Controls Engineering', 6, 21, 19, 8, 'Lead controls engineer'), S('Controls Engineering', 6, 42, 26, 8),
+      S('Electrical Design', 6, 21, 19, 6), S('SCADA & Software', 6, 42, 26, 6), S('Commissioning', 6, 81, 8, 8),
+      S('Commissioning', 7, 49, 5, 8), S('Electrical Design', 7, 14, 12, 4),
+      S('Controls Engineering', 8, 35, 19, 8), S('Controls Engineering', 8, 56, 33, 8), S('Controls Engineering', 8, 56, 33, 8),
+      S('SCADA & Software', 8, 56, 33, 6), S('Commissioning', 8, 98, 5, 8),
+    );
     // Example holidays: a few fixed-date ones that repeat yearly, plus a state-only one
     // (first Tuesday of November, Victoria) so the regional behaviour is visible.
     const year = todayStr().slice(0, 4);
@@ -266,7 +309,74 @@
       <option value="__other">Other…</option>
     </select>`;
 
-  function personStats(p, s, e) {
+  // ----- pipeline: how much each booking counts under the chosen view
+  const SCENARIOS = [['confirmed', 'Confirmed only'], ['all', 'Confirmed + pipeline'], ['weighted', 'Weighted by win chance']];
+  const isSlot = (a) => a.type === 'task' && !a.personId;
+  const isPipeline = (pr) => !!pr && pr.status === 'pipeline';
+  // Is a project shown on the schedule at all? Lost projects never are; pipeline ones only when the view includes them.
+  const projVisible = (pr) => !pr || (pr.status !== 'lost' && (pr.status !== 'pipeline' || ui.scenario !== 'confirmed'));
+  function projWeight(pr, scenario = ui.scenario) {
+    if (!pr || pr.status === 'confirmed') return 1;
+    if (pr.status === 'lost') return 0;
+    return scenario === 'all' ? 1 : scenario === 'weighted' ? (pr.winChance || 0) / 100 : 0;
+  }
+  const allocWeight = (a, scenario) => (a.type === 'timeoff' ? 1 : projWeight(findProject(a.projectId), scenario));
+  const allocVisible = (a) => a.type === 'timeoff' || projVisible(findProject(a.projectId));
+  const allocDiscipline = (a) => (a.personId ? (findPerson(a.personId) || {}).disciplineId || '' : a.disciplineId || '');
+  const discNameById = (id) => (findDiscipline(id) || {}).name || '';
+  const scenarioSelect = () => `<label class="toggle">Show <select id="scenario" title="How pipeline projects are counted">
+      ${SCENARIOS.map(([v, l]) => `<option value="${v}" ${ui.scenario === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
+  const pipelineTag = (pr) => (pr.status === 'pipeline' ? `<span class="tag pipe" title="Pipeline · ${pr.stage}${pr.decisionDate ? ` · decision ${shortDate(pr.decisionDate)}` : ''}">Pipeline · ${pr.winChance}%</span>`
+    : pr.status === 'lost' ? '<span class="tag lost">Lost</span>' : '');
+
+  // Day-by-day load for one person. weightOf(a) says how much each booking counts (0 = ignore).
+  function personDays(p, s, e, weightOf, skipId) {
+    const cap = +p.capacity || 0;
+    const allocs = state.allocations.filter((a) => a.personId === p.id && a.id !== skipId && a.end >= s && a.start <= e);
+    const out = [];
+    for (let d = s; d <= e; d = addDays(d, 1)) {
+      if (isWeekend(d)) continue;
+      const closed = closureFor(p, d);
+      let load = 0, off = 0;
+      for (const a of allocs) {
+        if (d < a.start || d > a.end) continue;
+        if (a.type === 'timeoff') off += +a.hoursPerDay || 0;
+        else load += (+a.hoursPerDay || 0) * weightOf(a);
+      }
+      out.push({ d, closed, load, off, avail: closed ? 0 : Math.max(0, cap - off) });
+    }
+    return out;
+  }
+  // How well would `hoursPerDay` over s..e fit this person (under the current view)?
+  function fitCheck(p, s, e, hoursPerDay, skipId) {
+    const days = personDays(p, s, e, (a) => allocWeight(a), skipId);
+    let free = 0, cap = 0, overDays = 0, leaveDays = 0, closedDays = 0;
+    for (const x of days) {
+      if (x.closed) { closedDays++; continue; }
+      if (x.off >= (+p.capacity || 0) && x.off > 0) leaveDays++;
+      cap += +p.capacity || 0;
+      free += Math.max(0, x.avail - x.load);
+      if (x.load + hoursPerDay > x.avail + 1e-9) overDays++;
+    }
+    return { free, freePct: cap ? (free / cap) * 100 : 0, overDays, leaveDays, closedDays, workdays: days.length - closedDays };
+  }
+  // People who'd be overbooked if this pipeline project wins (its bookings counted in full, other bids ignored).
+  function projectClashes(pr) {
+    const out = [];
+    const people = new Set(state.allocations.filter((a) => a.projectId === pr.id && a.personId).map((a) => a.personId));
+    for (const id of people) {
+      const p = findPerson(id);
+      if (!p) continue;
+      const mine = state.allocations.filter((a) => a.projectId === pr.id && a.personId === id);
+      const s = mine.reduce((m, a) => minS(m, a.start), mine[0].start), e = mine.reduce((m, a) => maxS(m, a.end), mine[0].end);
+      const days = personDays(p, s, e, (a) => (a.projectId === pr.id ? 1 : projWeight(findProject(a.projectId), 'confirmed')));
+      const over = days.filter((x) => !x.closed && x.load > x.avail + 1e-9).length;
+      if (over) out.push({ p, days: over });
+    }
+    return out;
+  }
+
+  function personStats(p, s, e, scenario = ui.scenario) {
     let capacity = 0, scheduled = 0, billable = 0, timeoff = 0, tentative = 0, closedHours = 0, closedWork = 0, closedDays = 0;
     const cap = +p.capacity || 0;
     const allocs = state.allocations.filter((a) => a.personId === p.id && a.end >= s && a.start <= e);
@@ -278,11 +388,12 @@
         if (d < a.start || d > a.end) continue;
         const h = +a.hoursPerDay || 0;
         if (a.type === 'timeoff') { if (!closed) off += h; continue; }
-        scheduled += h;
-        if (a.tentative) tentative += h;
-        if (closed) closedWork += h;
         const pr = findProject(a.projectId);
-        if (pr && pr.billable) billable += h;
+        const wh = h * projWeight(pr, scenario);
+        scheduled += wh;
+        if (a.tentative) tentative += wh;
+        if (closed) closedWork += wh;
+        if (pr && pr.billable) billable += wh;
       }
       if (closed) { closedHours += cap; closedDays++; } else { timeoff += off; capacity += Math.max(0, cap - off); }
     }
@@ -309,6 +420,7 @@
     document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.view === ui.view));
     if (ui.view === 'schedule') renderSchedule();
     else if (ui.view === 'projects') renderProjects();
+    else if (ui.view === 'pipeline') renderPipeline();
     else if (ui.view === 'people') renderPeople();
     else if (ui.view === 'holidays') renderHolidays();
     else renderReport();
@@ -328,8 +440,8 @@
   }
 
   function renderScheduleToolbar(rangeEnd) {
-    const projOpts = state.projects.filter((p) => !p.archived || p.id === ui.projectFilter)
-      .map((p) => `<option value="${p.id}" ${p.id === ui.projectFilter ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+    const projOpts = state.projects.filter((p) => (!p.archived && p.status !== 'lost') || p.id === ui.projectFilter)
+      .map((p) => `<option value="${p.id}" ${p.id === ui.projectFilter ? 'selected' : ''}>${esc(p.name)}${isPipeline(p) ? ` (pipeline ${p.winChance}%)` : ''}</option>`).join('');
     toolbar.innerHTML = `
       <button class="btn primary" data-act="new-alloc">+ Schedule</button>
       <div class="btn-group">
@@ -342,6 +454,7 @@
       <span class="spacer"></span>
       <input type="search" id="searchInput" placeholder="Search people…" value="${esc(ui.search)}">
       <select id="projectFilter"><option value="">All projects</option>${projOpts}</select>
+      ${scenarioSelect()}
       <label class="toggle">Group by <select id="groupBy">
         ${[['none', 'None'], ['discipline', 'Discipline'], ['project', 'Project']].map(([v, l]) => `<option value="${v}" ${ui.groupBy === v ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>`;
@@ -399,17 +512,31 @@
     let rows = '';
     if (ui.groupBy === 'project') rows = renderProjectGroups(people, ctx);
     else {
+      // Unfilled slots sit with their discipline (or in their own group when not grouping).
+      const slots = ui.search.trim() ? [] : visibleSlots(ctx);
+      const slotKey = (a) => discNameById(a.disciplineId) || 'No discipline';
       const groups = new Map();
       for (const p of people) {
         const key = ui.groupBy === 'discipline' ? (discName(p) || 'No discipline') : '';
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(p);
       }
+      if (ui.groupBy === 'discipline') for (const a of slots) if (!groups.has(slotKey(a))) groups.set(slotKey(a), []);
       const keys = [...groups.keys()].sort((a, b) => (a === 'No discipline') - (b === 'No discipline') || a.localeCompare(b));
       for (const key of keys) {
         const members = groups.get(key);
         if (ui.groupBy === 'discipline') rows += `<div class="group"><div class="group-side">${esc(key)}<span>${members.length}</span></div><div style="width:${width}px"></div></div>`;
         for (const p of members) rows += renderRow(p, ctx);
+        if (ui.groupBy === 'discipline') {
+          const mine = slots.filter((a) => slotKey(a) === key);
+          if (mine.length) rows += renderSlotRow(mine, ctx, { disciplineId: mine[0].disciplineId, label: `Unfilled · ${key}` });
+        }
+      }
+      if (ui.groupBy === 'none' && slots.length) {
+        rows += `<div class="group"><div class="group-side">Unfilled slots<span>${slots.length}</span></div><div style="width:${width}px"></div></div>`;
+        const byDisc = new Map();
+        for (const a of slots) { const k = slotKey(a); if (!byDisc.has(k)) byDisc.set(k, []); byDisc.get(k).push(a); }
+        for (const [k, list] of [...byDisc].sort((a, b) => a[0].localeCompare(b[0]))) rows += renderSlotRow(list, ctx, { disciplineId: list[0].disciplineId, label: `Unfilled · ${k}` });
       }
     }
     if (!state.people.length) {
@@ -422,7 +549,7 @@
     sched.innerHTML = `
       <div class="grid" style="width:calc(var(--side) + ${width}px)">
         <div class="ghead">
-          <div class="corner">${people.length} ${people.length === 1 ? 'person' : 'people'} · utilization</div>
+          <div class="corner">${people.length} ${people.length === 1 ? 'person' : 'people'} · utilization${ui.scenario === 'all' ? ' incl. pipeline' : ui.scenario === 'weighted' ? ' (weighted)' : ''}</div>
           <div class="timehead" style="width:${width}px">
             <div class="hm-row">${months}</div>
             <div class="hd-row">${dayCells}</div>
@@ -442,6 +569,7 @@
     const searching = !!ui.search.trim();
     const projects = state.projects.filter((pr) => {
       if (ui.projectFilter && pr.id !== ui.projectFilter) return false;
+      if (!projVisible(pr)) return false;
       const booked = state.allocations.some((a) => a.projectId === pr.id && inView(a));
       const datesInView = !pr.archived && (pr.start || pr.end) && (pr.end || '9999') >= vs && (pr.start || '0000') <= rangeEnd;
       return booked || datesInView;
@@ -449,12 +577,14 @@
     let out = '';
     for (const pr of projects) {
       const members = people.filter((p) => state.allocations.some((a) => a.personId === p.id && a.projectId === pr.id && inView(a)));
+      const slots = searching ? [] : visibleSlots(ctx).filter((a) => a.projectId === pr.id);
       if (searching && !members.length) continue;
       out += renderProjectHeader(pr, members.length, ctx);
       for (const p of members) out += renderRow(p, ctx, pr.id);
+      if (slots.length) out += renderSlotRow(slots, ctx, { projectId: pr.id, label: 'Unfilled slots' });
     }
     if (!ui.projectFilter) {
-      const free = people.filter((p) => visible.has(p.id) && !state.allocations.some((a) => a.personId === p.id && a.type === 'task' && inView(a)));
+      const free = people.filter((p) => visible.has(p.id) && !state.allocations.some((a) => a.personId === p.id && a.type === 'task' && allocVisible(a) && inView(a)));
       if (free.length) {
         out += `<div class="group"><div class="group-side">Not on a project in this view<span>${free.length}</span></div><div style="width:${width}px"></div></div>`;
         for (const p of free) out += renderRow(p, ctx, '');
@@ -480,6 +610,7 @@
       <div class="group proj-group">
         <div class="group-side proj-side" data-project-edit="${pr.id}" title="Edit ${esc(pr.name)}">
           <div class="proj-name"><span class="dot" style="background:${pr.color}"></span>${esc(pr.name)}<span>${count}</span></div>
+          ${isPipeline(pr) ? `<div>${pipelineTag(pr)}</div>` : ''}
           <div class="proj-meta">${esc(pr.client || '')}${pr.client && projectDatesLabel(pr) ? ' · ' : ''}${projectDatesLabel(pr)}</div>
           ${budgetMeter(pr)}
         </div>
@@ -494,7 +625,7 @@
   function renderRow(p, { dayW, days, vs, rangeEnd, dayList, todayIdx, width, bgStyle }, projectId) {
     // Load and capacity always use all of a person's bookings; when shown under a project, only
     // that project's bookings (plus time off) are drawn.
-    const allAllocs = state.allocations.filter((a) => a.personId === p.id && a.end >= vs && a.start <= rangeEnd);
+    const allAllocs = state.allocations.filter((a) => a.personId === p.id && a.end >= vs && a.start <= rangeEnd && allocVisible(a));
     const scoped = projectId === undefined ? allAllocs : allAllocs.filter((a) => a.type === 'timeoff' || a.projectId === projectId);
     const { lanes, count } = assignLanes(scoped);
     const height = Math.max(MIN_ROW, PAD * 2 + LOAD_SPACE + Math.max(1, count) * LANE - 4);
@@ -505,7 +636,7 @@
       const s = maxS(a.start, vs), e = minS(a.end, rangeEnd);
       for (let i = diffDays(vs, s), n = diffDays(vs, e); i <= n; i++) {
         if (isWeekend(dayList[i])) continue;
-        if (a.type === 'timeoff') off[i] += +a.hoursPerDay || 0; else sched[i] += +a.hoursPerDay || 0;
+        if (a.type === 'timeoff') off[i] += +a.hoursPerDay || 0; else sched[i] += (+a.hoursPerDay || 0) * allocWeight(a);
       }
     }
     let loadHtml = '';
@@ -559,6 +690,32 @@
       </div>`;
   }
 
+  function visibleSlots({ vs, rangeEnd }) {
+    return state.allocations.filter((a) => isSlot(a) && a.end >= vs && a.start <= rangeEnd && allocVisible(a)
+      && (!ui.projectFilter || a.projectId === ui.projectFilter));
+  }
+  // A row of unfilled slots. Dragging a slot onto a person assigns it; drawing on this row adds a slot.
+  function renderSlotRow(slots, { width, bgStyle, todayIdx, days, dayW, vs, rangeEnd }, { disciplineId, projectId, label }) {
+    const { lanes, count } = assignLanes(slots);
+    const height = Math.max(MIN_ROW - 8, PAD * 2 + Math.max(1, count) * LANE - 4);
+    const total = slots.reduce((sum, a) => sum + hoursInRange(a, a.start, a.end), 0);
+    const today = todayIdx >= 0 && todayIdx < days ? `<div class="today-col" style="left:${todayIdx * dayW}px;width:${dayW}px"></div>` : '';
+    const attrs = `${disciplineId !== undefined ? ` data-discipline="${disciplineId}"` : ''}${projectId !== undefined ? ` data-project="${projectId}"` : ''}`;
+    return `
+      <div class="row slot-row">
+        <div class="side slot-side" title="Slots for people you haven't named yet. Click one to see who could fill it, or drag it onto a person.">
+          <div class="avatar slot-avatar">?</div>
+          <div class="who">
+            <div class="name">${esc(label)}</div>
+            <div class="role">${slots.length} slot${slots.length === 1 ? '' : 's'} · ${hrs(total)}</div>
+          </div>
+        </div>
+        <div class="track slot-track" data-slot="1"${attrs} style="width:${width}px;height:${height}px;${bgStyle}">
+          ${today}${slots.map((a) => renderBar(a, lanes.get(a.id), { dayW, vs, rangeEnd })).join('')}
+        </div>
+      </div>`;
+  }
+
   function barGeom(start, end, { dayW, vs, rangeEnd }) {
     const s = maxS(start, vs), e = minS(end, rangeEnd);
     if (s > e) return null;
@@ -571,16 +728,21 @@
     const isOff = a.type === 'timeoff';
     const pr = isOff ? null : findProject(a.projectId);
     const color = pr ? pr.color : '#888';
-    const title = isOff ? (a.notes || 'Time off') : (pr ? pr.name : 'Unknown project');
+    const slot = isSlot(a);
+    const pipe = isPipeline(pr);
+    const title = isOff ? (a.notes || 'Time off') : slot ? (discNameById(a.disciplineId) || 'Unfilled slot') : (pr ? pr.name : 'Unknown project');
     const total = hoursInRange(a, a.start, a.end);
-    const sub = isOff ? 'Time off' : `${round1(a.hoursPerDay)}h/d${g.width > 150 ? ` · ${hrs(total)}` : ''}`;
+    const sub = isOff ? 'Time off' : slot ? `${pr ? pr.name : ''} · ${round1(a.hoursPerDay)}h/d` : `${round1(a.hoursPerDay)}h/d${g.width > 150 ? ` · ${hrs(total)}` : ''}`;
     const dim = ui.projectFilter && a.projectId !== ui.projectFilter;
     const outside = outsideProject(a, pr);
-    const cls = ['bar', isOff ? 'timeoff' : '', a.tentative ? 'tentative' : '', g.clipL ? 'clip-l' : '', g.clipR ? 'clip-r' : '', dim ? 'dim' : '', outside ? 'outside' : ''].join(' ');
-    const tip = `${title}${pr && pr.client ? ` (${pr.client})` : ''}\n${rangeLabel(a.start, a.end)} · ${round1(a.hoursPerDay)}h/day · ${hrs(total)} total${a.tentative ? '\nTentative' : ''}`
+    const cls = ['bar', isOff ? 'timeoff' : '', a.tentative ? 'tentative' : '', pipe ? 'pipeline' : '', slot ? 'slot' : '',
+      g.clipL ? 'clip-l' : '', g.clipR ? 'clip-r' : '', dim ? 'dim' : '', outside ? 'outside' : ''].join(' ');
+    const tip = `${slot ? `Unfilled slot: ${title}\n${pr ? pr.name : ''}` : `${title}${pr && pr.client ? ` (${pr.client})` : ''}`}\n${rangeLabel(a.start, a.end)} · ${round1(a.hoursPerDay)}h/day · ${hrs(total)} total${a.tentative ? '\nTentative' : ''}`
+      + `${pipe ? `\nPipeline · ${pr.winChance}% chance${pr.decisionDate ? ` · decision ${shortDate(pr.decisionDate)}` : ''}` : ''}`
+      + `${slot ? '\nClick to see who could fill it, or drag it onto a person' : ''}`
       + `${outside ? `\n⚠ Outside project dates (${projectDatesLabel(pr)})` : ''}${a.notes && !isOff ? `\n${a.notes}` : ''}`;
     return `<div class="${cls}" data-id="${a.id}" title="${esc(tip)}"
-      style="left:${g.left}px;width:${g.width}px;top:${PAD + lane * LANE}px;${isOff ? '' : `background-color:${color}`}">
+      style="left:${g.left}px;width:${g.width}px;top:${PAD + lane * LANE}px;--pc:${color};${isOff || slot ? '' : `background-color:${color}`}">
       ${outside ? '<span class="warn-ic" aria-label="Outside project dates">!</span>' : ''}<span class="bar-title">${esc(title)}</span><span class="bar-sub">${esc(sub)}</span>
       <span class="h h-l"></span><span class="h h-r"></span>
     </div>`;
@@ -594,17 +756,18 @@
       <span class="spacer"></span>
       <label class="toggle"><input type="checkbox" id="showArchived" ${ui.showArchived ? 'checked' : ''}> Show archived</label>`;
     const today = todayStr();
-    const rows = state.projects.filter((p) => ui.showArchived || !p.archived).map((p) => {
+    const rows = state.projects.filter((p) => ui.showArchived || (!p.archived && p.status !== 'lost')).map((p) => {
       const allocs = state.allocations.filter((a) => a.projectId === p.id);
+      const open = allocs.filter(isSlot).length;
       const total = allocs.reduce((s, a) => s + hoursInRange(a, a.start, a.end), 0);
       const upcoming = allocs.reduce((s, a) => s + hoursInRange(a, today, a.end), 0);
-      const people = new Set(allocs.map((a) => a.personId)).size;
+      const people = new Set(allocs.filter((a) => a.personId).map((a) => a.personId)).size;
       const outsideN = allocs.filter((a) => outsideProject(a, p)).length;
       return `<tr>
-        <td><span class="dot" style="background:${p.color}"></span><b>${esc(p.name)}</b> ${p.archived ? '<span class="tag">Archived</span>' : ''}</td>
+        <td><span class="dot" style="background:${p.color}"></span><b>${esc(p.name)}</b> ${pipelineTag(p)} ${p.archived ? '<span class="tag">Archived</span>' : ''}</td>
         <td>${esc(p.client || '—')}</td>
         <td>${p.billable ? '<span class="tag ok">Billable</span>' : '<span class="tag">Non-billable</span>'}</td>
-        <td class="num">${people}</td>
+        <td class="num">${people}${open ? ` <span class="tag slot-tag" title="Unfilled slots">+${open} open</span>` : ''}</td>
         <td>${projectDatesLabel(p) || '<span class="hint">Not set</span>'}${outsideN ? ` <span class="tag warn" title="Bookings outside the project dates">${outsideN} outside</span>` : ''}</td>
         <td>${p.phases.length ? `<span title="${esc(p.phases.map((ph) => `${ph.name}: ${rangeLabel(ph.start, ph.end)}`).join('\n'))}">${p.phases.length}</span>` : '—'}</td>
         <td>${budgetMeter(p, total)}</td>
@@ -627,7 +790,8 @@
     $('#schedule')?.remove();
     main.className = '';
     toolbar.innerHTML = `<button class="btn primary" data-act="new-person">+ Add person</button>
-      <button class="btn" data-act="new-discipline">+ Discipline</button>`;
+      <button class="btn" data-act="new-discipline">+ Discipline</button>
+      <span class="spacer"></span>${scenarioSelect()}`;
     const wk = startOfWeek(todayStr());
     const rows = [...state.people].sort((a, b) => a.name.localeCompare(b.name)).map((p) => {
       const thisWeek = personStats(p, wk, addDays(wk, 6));
@@ -673,7 +837,8 @@
         <button class="btn" data-preset="month">This month</button>
         <button class="btn" data-preset="next">Next month</button>
         <button class="btn" data-preset="quarter">This quarter</button>
-      </div>`;
+      </div>
+      <span class="spacer"></span>${scenarioSelect()}`;
     const totals = { capacity: 0, scheduled: 0, billable: 0, timeoff: 0, tentative: 0, closedHours: 0, closedWork: 0 };
     const peopleRows = [...state.people].sort((a, b) => a.name.localeCompare(b.name)).map((p) => {
       const st = personStats(p, s, e);
@@ -687,13 +852,15 @@
         <td><div class="hbar"><div class="meter ${st.util > 100.5 ? 'over' : st.util >= 99.5 ? 'full' : ''}"><i style="width:${Math.min(100, st.util)}%"></i></div><span>${pct(Math.min(st.util, 999))}</span></div></td></tr>`;
     }).join('');
 
+    // People's hours only (unfilled slots aren't anyone's time yet), weighted by the chosen view.
     const projHours = state.projects.map((p) => {
-      const list = state.allocations.filter((a) => a.projectId === p.id);
-      return { p, h: list.reduce((sum, a) => sum + hoursInRange(a, s, e), 0), people: new Set(list.filter((a) => hoursInRange(a, s, e) > 0).map((a) => a.personId)).size };
+      const list = state.allocations.filter((a) => a.projectId === p.id && a.personId);
+      const w = projWeight(p);
+      return { p, h: list.reduce((sum, a) => sum + hoursInRange(a, s, e), 0) * w, people: new Set(list.filter((a) => hoursInRange(a, s, e) > 0).map((a) => a.personId)).size };
     }).filter((x) => x.h > 0).sort((a, b) => b.h - a.h);
     const maxH = Math.max(1, ...projHours.map((x) => x.h));
     const projRows = projHours.map(({ p, h, people }) => `<tr>
-      <td><span class="dot" style="background:${p.color}"></span>${esc(p.name)}</td><td>${esc(p.client || '—')}</td>
+      <td><span class="dot" style="background:${p.color}"></span>${esc(p.name)} ${pipelineTag(p)}</td><td>${esc(p.client || '—')}</td>
       <td class="num">${people}</td>
       <td><div class="hbar"><div class="meter"><i style="width:${(h / maxH) * 100}%;background:${p.color}"></i></div><span>${hrs(h)}</span></div></td>
       <td class="num">${totals.scheduled ? pct((h / totals.scheduled) * 100) : '—'}</td></tr>`).join('');
@@ -701,7 +868,7 @@
     const util = totals.capacity ? (totals.scheduled / totals.capacity) * 100 : 0;
     const tile = (k, v) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`;
     main.innerHTML = `<div class="page">
-      <h2>Report</h2><p class="lede">${rangeLabel(s, e)} · ${workdays(s, e)} working days</p>
+      <h2>Report</h2><p class="lede">${rangeLabel(s, e)} · ${workdays(s, e)} working days · ${SCENARIOS.find((x) => x[0] === ui.scenario)[1].toLowerCase()}</p>
       <div class="tiles">
         ${tile('Capacity', hrs(totals.capacity))}${tile('Scheduled', hrs(totals.scheduled))}
         ${tile('Billable', hrs(totals.billable))}${tile('Non-billable', hrs(totals.scheduled - totals.billable))}
@@ -715,6 +882,129 @@
         <thead><tr><th>Project</th><th>Client</th><th class="num">People</th><th>Hours</th><th class="num">Share</th></tr></thead>
         <tbody>${projRows || '<tr><td colspan="5">Nothing scheduled in this range.</td></tr>'}</tbody></table></div></div>
     </div>`;
+  }
+
+  // ----- pipeline (potential wins)
+  function projectNeed(pr) {
+    const allocs = state.allocations.filter((a) => a.projectId === pr.id && a.type === 'task');
+    let total = 0, filled = 0;
+    const byDisc = new Map();
+    for (const a of allocs) {
+      const h = hoursInRange(a, a.start, a.end);
+      total += h;
+      if (a.personId) filled += h;
+      const k = discNameById(allocDiscipline(a)) || 'No discipline';
+      byDisc.set(k, (byDisc.get(k) || 0) + h);
+    }
+    return { total, filled, open: total - filled, slots: allocs.filter(isSlot).length, byDisc: [...byDisc].sort((a, b) => b[1] - a[1]) };
+  }
+  function renderPipeline() {
+    $('#schedule')?.remove();
+    main.className = '';
+    toolbar.innerHTML = `<button class="btn primary" data-act="new-pipeline">+ Pipeline project</button>
+      <span class="spacer"></span><span class="hint">Model potential wins without changing anyone's real workload.</span>`;
+    const today = todayStr();
+    const bids = state.projects.filter((p) => p.status === 'pipeline').sort((a, b) => (a.decisionDate || '9999') < (b.decisionDate || '9999') ? -1 : 1);
+    const lost = state.projects.filter((p) => p.status === 'lost');
+    let tAll = 0, tWeighted = 0, tOpen = 0;
+    const clashPeople = new Set();
+    const rows = bids.map((p) => {
+      const need = projectNeed(p);
+      const clashes = projectClashes(p);
+      clashes.forEach((c) => clashPeople.add(c.p.id));
+      tAll += need.total; tWeighted += need.total * (p.winChance / 100); tOpen += need.open;
+      const filledPct = need.total ? (need.filled / need.total) * 100 : 0;
+      const days = p.decisionDate ? diffDays(today, p.decisionDate) : null;
+      const when = days === null ? '<span class="hint">Not set</span>'
+        : `${shortDate(p.decisionDate)} <span class="${days < 0 ? 'over-text' : 'hint'}">${days < 0 ? `${-days}d overdue` : days === 0 ? 'today' : `in ${days}d`}</span>`;
+      const chips = need.byDisc.slice(0, 3).map(([k, h]) => `<span class="need-chip">${esc(k)} ${hrs(h)}</span>`).join('')
+        + (need.byDisc.length > 3 ? `<span class="need-chip">+${need.byDisc.length - 3}</span>` : '');
+      return `<tr>
+        <td><span class="dot" style="background:${p.color}"></span><b>${esc(p.name)}</b><div class="hint">${esc(p.client || '')}${p.client ? ' · ' : ''}${esc(p.stage)}</div></td>
+        <td><div class="hbar win"><div class="meter"><i style="width:${p.winChance}%"></i></div><span>${p.winChance}%</span></div></td>
+        <td>${when}</td>
+        <td>${projectDatesLabel(p) || '<span class="hint">Not set</span>'}</td>
+        <td><div class="need">${chips || '<span class="hint">No slots yet</span>'}</div></td>
+        <td><div class="hbar" title="${hrs(need.filled)} of ${hrs(need.total)} assigned to people"><div class="meter ${filledPct >= 99.5 ? 'full' : ''}"><i style="width:${filledPct}%"></i></div><span>${pct(filledPct)}</span></div>
+          ${need.slots ? `<span class="hint">${need.slots} open slot${need.slots === 1 ? '' : 's'} · ${hrs(need.open)}</span>` : ''}</td>
+        <td>${clashes.length ? `<span class="tag danger-tag" title="${esc(clashes.map((c) => `${c.p.name}: overbooked ${c.days} day${c.days === 1 ? '' : 's'}`).join('\n'))}">${clashes.length} ${clashes.length === 1 ? 'person' : 'people'}</span>` : '<span class="tag ok">None</span>'}</td>
+        <td><div class="actions pipe-actions">
+          <button class="btn sm" data-act="view-project" data-id="${p.id}">Schedule</button>
+          <button class="btn sm" data-act="edit-project" data-id="${p.id}">Edit</button>
+          <button class="btn sm won-btn" data-act="win-project" data-id="${p.id}">Won</button>
+          <button class="btn sm" data-act="lose-project" data-id="${p.id}">Lost</button>
+        </div></td></tr>`;
+    }).join('');
+    const tile = (k, v, hint = '') => `<div class="tile" ${hint ? `title="${esc(hint)}"` : ''}><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    main.innerHTML = `<div class="page">
+      <h2>Pipeline</h2>
+      <p class="lede">Potential wins. Plan the people each one needs with unfilled slots, try names in them, then mark a project as won to make it real.
+        Use <b>Show</b> on the Schedule to see the effect on everyone's workload.</p>
+      <div class="tiles">
+        ${tile('Open bids', bids.length)}
+        ${tile('Hours if all win', hrs(tAll))}
+        ${tile('Weighted hours', hrs(tWeighted), 'Each bid counted by its win chance')}
+        ${tile('Unfilled hours', hrs(tOpen), 'Hours in slots with nobody named yet')}
+        ${tile('People with clashes', clashPeople.size, 'People who would be overbooked if their bid wins')}
+      </div>
+      <div class="card"><div class="table-wrap"><table class="pipe-table">
+        <thead><tr><th>Project</th><th>Win chance</th><th>Decision</th><th>Dates</th><th>Hours needed</th><th>Filled</th><th>Clashes</th><th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="8"><div class="empty-state" style="padding:30px"><h3>No pipeline projects yet</h3>
+          <p>Add a potential win, then add unfilled slots for the disciplines it needs.</p>
+          <button class="btn primary" data-act="new-pipeline">+ Pipeline project</button></div></td></tr>`}</tbody>
+      </table></div></div>
+      ${lost.length ? `<div class="card"><h3>Lost</h3><div class="table-wrap"><table>
+        <thead><tr><th>Project</th><th>Client</th><th>Decision</th><th class="num">Hours modelled</th><th></th></tr></thead>
+        <tbody>${lost.map((p) => `<tr><td><span class="dot" style="background:${p.color}"></span>${esc(p.name)}</td><td>${esc(p.client || '—')}</td>
+          <td>${p.decisionDate ? shortDate(p.decisionDate) : '—'}</td><td class="num">${hrs(projectNeed(p).total)}</td>
+          <td><div class="actions"><button class="btn sm" data-act="reopen-project" data-id="${p.id}">Reopen</button></div></td></tr>`).join('')}</tbody>
+      </table></div></div>` : ''}
+    </div>`;
+  }
+
+  function openWinModal(pr) {
+    const allocs = state.allocations.filter((a) => a.projectId === pr.id);
+    const oldStart = pr.start || (allocs.length ? allocs.reduce((m, a) => minS(m, a.start), allocs[0].start) : '');
+    const need = projectNeed(pr);
+    modal({
+      title: `Mark "${pr.name}" as won`,
+      body: `
+        <p style="margin:0">It becomes a confirmed project, and its bookings become firm.</p>
+        <label class="field">Start date${oldStart ? '' : ' (optional)'}<input type="date" name="start" value="${oldStart}"></label>
+        <p class="summary" id="winSummary"></p>`,
+      footer: saveFooter().replace('>Save<', '>Mark as won<'),
+      mount(form) {
+        const sync = () => {
+          const ns = form.start.value;
+          const shift = oldStart && ns ? diffDays(oldStart, ns) : 0;
+          let msg = shift ? `Moves the project, its ${pr.phases.length} phase${pr.phases.length === 1 ? '' : 's'} and ${allocs.length} booking${allocs.length === 1 ? '' : 's'} ${Math.abs(shift)} day${Math.abs(shift) === 1 ? '' : 's'} ${shift > 0 ? 'later' : 'earlier'}.`
+            : 'Dates stay as they are. Change the start date if the award has moved it.';
+          if (need.slots) msg += `<br><span class="hol-note">${need.slots} unfilled slot${need.slots === 1 ? '' : 's'} (${hrs(need.open)}) will still need people.</span>`;
+          $('#winSummary', form).innerHTML = msg;
+        };
+        form.addEventListener('input', sync);
+        sync();
+      },
+      onSubmit(fd) {
+        const ns = fd.get('start');
+        const shift = oldStart && ns ? diffDays(oldStart, ns) : 0;
+        const mv = (d) => (d ? addDays(d, shift) : d);
+        commit((st) => {
+          const x = st.projects.find((y) => y.id === pr.id);
+          x.status = 'confirmed';
+          x.start = mv(x.start); x.end = mv(x.end);
+          x.phases.forEach((ph) => { ph.start = mv(ph.start); ph.end = mv(ph.end); });
+          for (const a of st.allocations) if (a.projectId === pr.id) { a.start = mv(a.start); a.end = mv(a.end); a.tentative = false; }
+        });
+        toast(need.slots ? `Won! ${need.slots} unfilled slot${need.slots === 1 ? '' : 's'} still need people` : 'Won! Now a confirmed project');
+      },
+    });
+  }
+  function markLost(pr) {
+    if (!confirm(`Mark "${pr.name}" as lost?\n\nIts bookings are kept for the record but no longer appear on the schedule or count towards anyone's workload. You can reopen it later.`)) return;
+    commit((st) => { st.projects.find((y) => y.id === pr.id).status = 'lost'; });
+    if (ui.projectFilter === pr.id) ui.projectFilter = '';
+    toast('Marked as lost — Ctrl+Z to undo');
   }
 
   // ----- holidays & shutdowns
@@ -883,20 +1173,30 @@
 
   function openAllocModal(input, isNew) {
     if (!state.people.length) { toast('Add a person first'); openPersonModal(null); return; }
-    const person = findPerson(input.personId) || state.people[0];
-    const a = { type: 'task', projectId: '', hoursPerDay: person.capacity, notes: '', tentative: false, start: todayStr(), end: todayStr(), ...input, personId: person.id };
-    if (!a.projectId) a.projectId = (state.projects.find((p) => !p.archived) || {}).id || '';
-    const projects = state.projects.filter((p) => !p.archived || p.id === a.projectId);
-    const personOpts = state.people.map((p) => `<option value="${p.id}" ${p.id === a.personId ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
-    const projOpts = projects.map((p) => `<option value="${p.id}" ${p.id === a.projectId ? 'selected' : ''}>${esc(p.name)}${p.client ? ` — ${esc(p.client)}` : ''}</option>`).join('');
+    // personId === null means an unfilled slot: demand for a discipline before anyone is named.
+    const slotMode = input.personId === null;
+    const person = slotMode ? null : findPerson(input.personId) || state.people[0];
+    const a = { type: 'task', projectId: '', hoursPerDay: person ? person.capacity : 8, notes: '', tentative: false, start: todayStr(), end: todayStr(), disciplineId: '',
+      ...input, personId: person ? person.id : '' };
+    if (!a.projectId) a.projectId = (state.projects.find((p) => !p.archived && p.status !== 'lost') || {}).id || '';
+    const projects = state.projects.filter((p) => (!p.archived && p.status !== 'lost') || p.id === a.projectId);
+    const personOpts = `<option value="" ${slotMode ? 'selected' : ''}>— Unfilled slot (name someone later) —</option>`
+      + state.people.map((p) => `<option value="${p.id}" ${p.id === a.personId ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+    const projOpts = projects.map((p) => `<option value="${p.id}" ${p.id === a.projectId ? 'selected' : ''}>${esc(p.name)}${p.client ? ` — ${esc(p.client)}` : ''}${isPipeline(p) ? ` (pipeline ${p.winChance}%)` : ''}</option>`).join('');
+    const discOpts = `<option value="">Any discipline</option>${sortedDisciplines().map((d) => `<option value="${d.id}" ${d.id === a.disciplineId ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}`;
     modal({
-      title: isNew ? 'Schedule work' : (a.type === 'timeoff' ? 'Edit time off' : 'Edit allocation'),
+      title: isNew ? (slotMode ? 'Add unfilled slot' : 'Schedule work') : (a.type === 'timeoff' ? 'Edit time off' : slotMode ? 'Unfilled slot' : 'Edit allocation'),
+      wide: true,
       body: `
         <div class="seg">
           <label><input type="radio" name="type" value="task" ${a.type === 'task' ? 'checked' : ''}> Project work</label>
           <label><input type="radio" name="type" value="timeoff" ${a.type === 'timeoff' ? 'checked' : ''}> Time off</label>
         </div>
         <label class="field">Person<select name="personId">${personOpts}</select></label>
+        <div class="grid2 slot-only">
+          <label class="field">Discipline needed<select name="disciplineId">${discOpts}</select></label>
+          ${isNew ? '<label class="field">How many people<input type="number" name="count" min="1" max="20" step="1" value="1"></label>' : '<span></span>'}
+        </div>
         <div class="field proj-only"><span>Project</span>
           <div class="inline"><select name="projectId">${projOpts || '<option value="">No projects — create one</option>'}</select>
           <button type="button" class="btn" id="quickProject" title="Create a project">+ New</button></div>
@@ -910,20 +1210,25 @@
           <label class="check proj-only"><input type="checkbox" name="tentative" ${a.tentative ? 'checked' : ''}> Tentative</label>
         </div>
         <label class="field"><span class="notes-label">Notes</span><textarea name="notes" rows="2" placeholder="Optional details">${esc(a.notes)}</textarea></label>
-        <p class="summary" id="allocSummary"></p>`,
+        <p class="summary" id="allocSummary"></p>
+        <div class="field slot-only"><span>Who could fill it</span><div class="suggest" id="suggest"></div></div>`,
       footer: saveFooter(isNew ? '' : `<button type="button" class="btn danger" id="delAlloc">Delete</button><button type="button" class="btn" id="dupAlloc">Duplicate</button>`),
       mount(form) {
         const sync = () => {
           const fd = new FormData(form);
           const off = fd.get('type') === 'timeoff';
+          const slot = !off && !fd.get('personId');
           form.querySelectorAll('.proj-only').forEach((el) => { el.style.display = off ? 'none' : ''; });
+          form.querySelectorAll('.slot-only').forEach((el) => { el.style.display = slot ? '' : 'none'; });
           $('.notes-label', form).textContent = off ? 'Reason' : 'Notes';
           let s = fd.get('start'), e = fd.get('end');
           if (s && e) {
             if (e < s) [s, e] = [e, s];
             const wd = workdays(s, e), h = +fd.get('hoursPerDay') || 0;
             const p = findPerson(fd.get('personId'));
-            let msg = `${wd} working day${wd === 1 ? '' : 's'} · <b>${hrs(wd * h)}</b> total`;
+            const n = slot && isNew ? clamp(Math.round(+fd.get('count') || 1), 1, 20) : 1;
+            let msg = `${wd} working day${wd === 1 ? '' : 's'} · <b>${hrs(wd * h * n)}</b> total${n > 1 ? ` (${n} people)` : ''}`;
+            if (slot) renderSuggestions(form, s, e, h, fd.get('disciplineId'));
             if (p && !off) {
               const st = personStats(p, s, e);
               const self = isNew ? null : findAlloc(a.id);
@@ -936,7 +1241,7 @@
             if (pr) {
               const self = isNew ? null : findAlloc(a.id);
               const selfTotal = self && self.type === 'task' && self.projectId === pr.id ? hoursInRange(self, self.start, self.end) : 0;
-              const after = projectUsed(pr) - selfTotal + wd * h;
+              const after = projectUsed(pr) - selfTotal + wd * h * n;
               if (pr.budgetHours) {
                 const over = after > pr.budgetHours + 1e-9;
                 msg += `<br>${esc(pr.name)} budget: <b>${hrs(after)}</b> of ${hrs(pr.budgetHours)} after this booking`
@@ -971,6 +1276,21 @@
           sync();
         });
         sync();
+        // "Assign" on a suggestion: save the form as a booking for that person.
+        $('#suggest', form).addEventListener('click', (ev) => {
+          const btn = ev.target.closest('[data-assign]');
+          if (!btn) return;
+          const data = collect(new FormData(form));
+          if (typeof data === 'string') { const err = $('.error', form); err.textContent = data; err.hidden = false; return; }
+          const who = findPerson(btn.dataset.assign);
+          const booking = { ...data, personId: who.id };
+          delete booking.disciplineId;
+          commit((st) => {
+            if (isNew) st.allocations.push({ id: uid(), ...booking });
+            else { const x = st.allocations.find((y) => y.id === a.id); Object.assign(x, booking); delete x.disciplineId; }
+          });
+          closeModal(); toast(`Assigned to ${who.name}`);
+        });
         $('#quickProject', form).addEventListener('click', () => {
           const name = prompt('New project name');
           if (!name || !name.trim()) return;
@@ -994,24 +1314,60 @@
         }
       },
       onSubmit(fd) {
-        const type = fd.get('type');
-        let start = fd.get('start'), end = fd.get('end');
-        const hoursPerDay = +fd.get('hoursPerDay');
-        if (!start || !end) return 'Please choose start and end dates.';
-        if (end < start) [start, end] = [end, start];
-        if (!(hoursPerDay > 0) || hoursPerDay > 24) return 'Hours per day must be between 0.25 and 24.';
-        if (type === 'task' && !fd.get('projectId')) return 'Please choose or create a project.';
-        const data = {
-          type, personId: fd.get('personId'), projectId: type === 'task' ? fd.get('projectId') : null,
-          start, end, hoursPerDay, notes: (fd.get('notes') || '').trim(), tentative: type === 'task' && fd.get('tentative') === 'on',
-        };
+        const data = collect(fd);
+        if (typeof data === 'string') return data;
+        const n = !data.personId && isNew ? clamp(Math.round(+fd.get('count') || 1), 1, 20) : 1;
         commit((st) => {
-          if (isNew) st.allocations.push({ id: uid(), ...data });
-          else Object.assign(st.allocations.find((x) => x.id === a.id), data);
+          if (isNew) for (let i = 0; i < n; i++) st.allocations.push({ id: uid(), ...data });
+          else {
+            const x = st.allocations.find((y) => y.id === a.id);
+            Object.assign(x, data);
+            if (data.personId) delete x.disciplineId;
+          }
         });
-        toast(isNew ? 'Scheduled' : 'Saved');
+        toast(isNew ? (data.personId ? 'Scheduled' : `${n} unfilled slot${n === 1 ? '' : 's'} added`) : 'Saved');
       },
     });
+    // Reads the form into a booking, or returns an error message.
+    function collect(fd) {
+      const type = fd.get('type');
+      let start = fd.get('start'), end = fd.get('end');
+      const hoursPerDay = +fd.get('hoursPerDay');
+      const personId = fd.get('personId') || null;
+      if (!start || !end) return 'Please choose start and end dates.';
+      if (end < start) [start, end] = [end, start];
+      if (!(hoursPerDay > 0) || hoursPerDay > 24) return 'Hours per day must be between 0.25 and 24.';
+      if (type === 'task' && !fd.get('projectId')) return 'Please choose or create a project.';
+      if (type === 'timeoff' && !personId) return 'Time off needs a person.';
+      const data = {
+        type, personId, projectId: type === 'task' ? fd.get('projectId') : null,
+        start, end, hoursPerDay, notes: (fd.get('notes') || '').trim(), tentative: type === 'task' && fd.get('tentative') === 'on',
+      };
+      if (!personId) data.disciplineId = fd.get('disciplineId') || '';
+      return data;
+    }
+    // People ranked by how well they'd fit: matching discipline first, then most free.
+    function renderSuggestions(form, s, e, h, disciplineId) {
+      const box = $('#suggest', form);
+      const ranked = state.people.map((p) => ({ p, fit: fitCheck(p, s, e, h, isNew ? undefined : a.id), match: !disciplineId || p.disciplineId === disciplineId }))
+        .sort((x, y) => (y.match - x.match) || (y.fit.freePct - x.fit.freePct));
+      const shown = ranked; // matching discipline first, then the best of everyone else
+      if (!shown.length) { box.innerHTML = '<p class="hint" style="margin:0">No people yet.</p>'; return; }
+      box.innerHTML = shown.slice(0, 8).map(({ p, fit, match }) => {
+        const notes = [];
+        if (fit.leaveDays) notes.push(`on leave ${fit.leaveDays} day${fit.leaveDays === 1 ? '' : 's'}`);
+        if (fit.closedDays) notes.push(`${fit.closedDays} holiday day${fit.closedDays === 1 ? '' : 's'}`);
+        const status = fit.overDays ? `<span class="s-bad">would be overbooked on ${fit.overDays} day${fit.overDays === 1 ? '' : 's'}</span>` : '<span class="s-ok">fits</span>';
+        return `<div class="s-row">
+          <div class="avatar" style="background:${p.color || hashColor(p.name)}">${esc(initials(p.name))}</div>
+          <div class="s-who"><b>${esc(p.name)}</b><span>${esc(discName(p) || 'No discipline')}${match ? '' : ' · different discipline'}</span></div>
+          <div class="s-fit"><div class="meter ${fit.freePct < 20 ? 'over' : ''}"><i style="width:${Math.min(100, fit.freePct)}%"></i></div>
+            <span>${pct(fit.freePct)} free · ${status}${notes.length ? ` · ${notes.join(', ')}` : ''}</span></div>
+          <button type="button" class="btn sm" data-assign="${p.id}">Assign</button>
+        </div>`;
+      }).join('') + (shown.length > 8 ? `<p class="hint" style="margin:4px 0 0">${shown.length - 8} more not shown.</p>` : '')
+        + (ui.scenario === 'confirmed' ? '' : `<p class="hint" style="margin:4px 0 0">Free time is based on "${SCENARIOS.find((x) => x[0] === ui.scenario)[1]}".</p>`);
+    }
   }
 
   function openPersonModal(p) {
@@ -1058,9 +1414,11 @@
     });
   }
 
-  function openProjectModal(p) {
+  function openProjectModal(p, defaults = {}) {
     const isNew = !p;
-    p = p || { name: '', client: '', color: COLORS[state.projects.length % COLORS.length], billable: true, archived: false, start: '', end: '', budgetHours: null, phases: [] };
+    p = p || { name: '', client: '', color: COLORS[state.projects.length % COLORS.length], billable: true, archived: false, start: '', end: '', budgetHours: null, phases: [],
+      status: 'confirmed', winChance: 50, stage: 'Bidding', decisionDate: '', ...defaults };
+    const templates = state.projects.filter((x) => x.phases.length || state.allocations.some((a) => a.projectId === x.id && a.type === 'task'));
     const used = isNew ? 0 : projectUsed(p);
     const phaseRow = (ph = { id: '', name: '', start: '', end: '' }) => `
       <div class="phase-row" data-id="${ph.id}">
@@ -1071,10 +1429,23 @@
       </div>`;
     const clients = [...new Set(state.projects.map((x) => x.client).filter(Boolean))];
     modal({
-      title: isNew ? 'New project' : 'Edit project',
+      title: isNew ? (p.status === 'pipeline' ? 'New pipeline project' : 'New project') : 'Edit project',
       wide: true,
       body: `
-        <label class="field">Project name<input name="name" value="${esc(p.name)}" required placeholder="e.g. Website Redesign"></label>
+        <div class="seg">
+          <label><input type="radio" name="status" value="confirmed" ${p.status === 'confirmed' ? 'checked' : ''}> Confirmed</label>
+          <label><input type="radio" name="status" value="pipeline" ${p.status === 'pipeline' ? 'checked' : ''}> Pipeline (potential win)</label>
+          ${p.status === 'lost' ? '<label><input type="radio" name="status" value="lost" checked> Lost</label>' : ''}
+        </div>
+        <label class="field">Project name<input name="name" value="${esc(p.name)}" required placeholder="e.g. Pump Station Upgrade"></label>
+        <div class="grid3 pipe-only">
+          <label class="field">Win chance (%)<input type="number" name="winChance" min="0" max="100" step="5" value="${p.winChance}"></label>
+          <label class="field">Decision expected<input type="date" name="decisionDate" value="${p.decisionDate}"></label>
+          <label class="field">Stage<select name="stage">${['Bidding', 'Shortlisted'].map((x) => `<option ${x === p.stage ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+        </div>
+        ${isNew && templates.length ? `<label class="field">Copy phases and staffing from (optional)<select name="template">
+            <option value="">— Start blank —</option>${templates.map((x) => `<option value="${x.id}">${esc(x.name)}${x.client ? ` — ${esc(x.client)}` : ''}</option>`).join('')}</select>
+          <span class="hint" style="font-weight:400">Phases are copied, and each booking becomes an unfilled slot for that person's discipline, moved to your start date.</span></label>` : ''}
         <label class="field">Client<input name="client" value="${esc(p.client)}" list="clientList" placeholder="Optional"></label>
         <datalist id="clientList">${clients.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
         <div class="grid2">
@@ -1097,6 +1468,12 @@
       footer: saveFooter(isNew ? '' : `<button type="button" class="btn danger" id="delProject">Delete</button>`),
       mount(form) {
         const list = $('#phaseList', form);
+        const syncStatus = () => {
+          const pipe = new FormData(form).get('status') === 'pipeline';
+          form.querySelectorAll('.pipe-only').forEach((el) => { el.style.display = pipe ? '' : 'none'; });
+        };
+        form.addEventListener('change', syncStatus);
+        syncStatus();
         const sum = () => {
           const b = +form.budgetHours.value;
           const outsideN = isNew ? 0 : state.allocations.filter((a) => a.projectId === p.id && outsideProject(a, { start: form.start.value, end: form.end.value })).length;
@@ -1143,10 +1520,31 @@
           phases.push(ph);
         }
         phases.sort((a, b) => (a.start < b.start ? -1 : 1));
+        const status = fd.get('status') || 'confirmed';
+        const winChance = clamp(Math.round(+fd.get('winChance') || 0), 0, 100);
         const data = { name, client: (fd.get('client') || '').trim(), color: fd.get('color') || COLORS[0], billable: fd.get('billable') === 'on', archived: fd.get('archived') === 'on',
-          start, end, budgetHours: budgetHours || null, phases };
-        commit((st) => { if (isNew) st.projects.push({ id: uid(), ...data }); else Object.assign(st.projects.find((x) => x.id === p.id), data); });
-        toast(isNew ? 'Project created' : 'Saved');
+          start, end, budgetHours: budgetHours || null, phases,
+          status, winChance, stage: fd.get('stage') || 'Bidding', decisionDate: fd.get('decisionDate') || '' };
+        // Optional template: copy its phases, and turn its bookings into unfilled slots, shifted to this start date.
+        const src = isNew && fd.get('template') ? findProject(fd.get('template')) : null;
+        const id = isNew ? uid() : p.id;
+        let slots = [];
+        if (src) {
+          const srcAllocs = state.allocations.filter((a) => a.projectId === src.id && a.type === 'task');
+          const srcStart = src.start || (srcAllocs.length ? srcAllocs.reduce((m, a) => minS(m, a.start), srcAllocs[0].start) : '');
+          const offset = data.start && srcStart ? diffDays(srcStart, data.start) : 0;
+          if (!data.start && srcStart) data.start = srcStart;
+          if (!data.end && src.end) data.end = addDays(src.end, offset);
+          if (!data.budgetHours) data.budgetHours = src.budgetHours;
+          if (!data.phases.length) data.phases = src.phases.map((ph) => ({ id: uid(), name: ph.name, start: addDays(ph.start, offset), end: addDays(ph.end, offset) }));
+          slots = srcAllocs.map((a) => ({ id: uid(), type: 'task', personId: null, disciplineId: allocDiscipline(a), projectId: id,
+            start: addDays(a.start, offset), end: addDays(a.end, offset), hoursPerDay: a.hoursPerDay, notes: a.notes || '', tentative: false }));
+        }
+        commit((st) => {
+          if (isNew) st.projects.push({ id, ...data }); else Object.assign(st.projects.find((x) => x.id === p.id), data);
+          st.allocations.push(...slots);
+        });
+        toast(isNew ? (src ? `Created with ${slots.length} unfilled slot${slots.length === 1 ? '' : 's'} from ${src.name}` : 'Project created') : 'Saved');
       },
     });
   }
@@ -1178,6 +1576,7 @@
     commit((st) => {
       st.disciplines = st.disciplines.filter((x) => x.id !== id);
       for (const p of st.people) if (p.disciplineId === id) p.disciplineId = '';
+      for (const a of st.allocations) if (a.disciplineId === id) a.disciplineId = '';
     });
     toast('Discipline deleted — Ctrl+Z to undo');
   }
@@ -1212,7 +1611,8 @@
       e.preventDefault();
     } else if (track) {
       const d = dayAt(track, e.clientX);
-      drag = { mode: 'create', track, personId: track.dataset.person, projectId: track.dataset.project || '', d0: d, d1: d, x0: e.clientX, y0: e.clientY, moved: false };
+      drag = { mode: 'create', track, personId: track.dataset.slot ? null : track.dataset.person, disciplineId: track.dataset.discipline,
+        projectId: track.dataset.project || '', d0: d, d1: d, x0: e.clientX, y0: e.clientY, moved: false };
       e.preventDefault();
     }
   });
@@ -1269,24 +1669,38 @@
       if (d.sel) d.sel.remove();
       const s = Math.min(d.d0, d.d1), en = Math.max(d.d0, d.d1);
       const extra = d.projectId ? { projectId: d.projectId } : {};
+      if (d.personId === null && d.disciplineId) extra.disciplineId = d.disciplineId;
       openAllocModal({ personId: d.personId, start: addDays(ui.viewStart, s), end: addDays(ui.viewStart, en), ...extra }, true);
       return;
     }
     if (!d.moved) { openAllocModal(d.a, false); return; }
-    const personId = d.mode === 'move' ? d.targetTrack.dataset.person : d.a.personId;
-    // Dropping onto a person's row under another project (Group by: Project) moves the booking to that project.
+    // Where did it land? A person's row assigns it to them; an unfilled-slot row turns it back into a slot.
+    const toSlotRow = d.mode === 'move' && !!d.targetTrack.dataset.slot;
+    if (toSlotRow && d.a.type === 'timeoff') { render(); toast('Time off stays with its person'); return; }
+    const personId = d.mode !== 'move' ? d.a.personId : toSlotRow ? null : d.targetTrack.dataset.person;
+    const disciplineId = personId ? undefined
+      : toSlotRow && d.targetTrack.dataset.discipline !== undefined ? d.targetTrack.dataset.discipline : allocDiscipline(d.a);
+    // Dropping onto a row under another project (Group by: Project) moves the booking to that project.
     const targetProject = d.mode === 'move' && d.a.type === 'task' ? d.targetTrack.dataset.project : '';
     const projectId = targetProject || d.a.projectId;
-    if (d.newStart === d.a.start && d.newEnd === d.a.end && personId === d.a.personId && projectId === d.a.projectId) { render(); return; }
+    if (d.newStart === d.a.start && d.newEnd === d.a.end && personId === d.a.personId && projectId === d.a.projectId
+      && (personId || disciplineId === d.a.disciplineId)) { render(); return; }
     const copy = d.mode === 'move' && e.altKey;
     const orig = { personId: d.a.personId, projectId: d.a.projectId }; // d.a is mutated by the commit below
+    const changes = { personId, projectId, start: d.newStart, end: d.newEnd };
     commit((st) => {
-      if (copy) st.allocations.push({ ...d.a, id: uid(), personId, projectId, start: d.newStart, end: d.newEnd });
-      else Object.assign(st.allocations.find((x) => x.id === d.a.id), { personId, projectId, start: d.newStart, end: d.newEnd });
+      const target = copy ? { ...d.a, id: uid() } : st.allocations.find((x) => x.id === d.a.id);
+      Object.assign(target, changes);
+      if (personId) delete target.disciplineId; else target.disciplineId = disciplineId || '';
+      if (copy) st.allocations.push(target);
     });
     const who = findPerson(personId);
     const pr = findProject(projectId);
-    toast(copy ? 'Copied' : projectId !== orig.projectId ? `Moved to ${pr ? pr.name : 'project'}` : personId !== orig.personId ? `Moved to ${who ? who.name : 'person'}` : `Rescheduled to ${rangeLabel(d.newStart, d.newEnd)}`);
+    toast(copy ? 'Copied'
+      : !orig.personId && personId ? `Assigned to ${who ? who.name : 'person'}`
+        : orig.personId && !personId ? 'Now an unfilled slot'
+          : projectId !== orig.projectId ? `Moved to ${pr ? pr.name : 'project'}`
+            : personId !== orig.personId ? `Moved to ${who ? who.name : 'person'}` : `Rescheduled to ${rangeLabel(d.newStart, d.newEnd)}`);
   });
   window.addEventListener('pointercancel', () => { if (drag) { drag.sel?.remove(); drag = null; render(); } });
 
@@ -1325,7 +1739,17 @@
       case 'bulk-holidays': openBulkHolidayModal(); break;
       case 'new-shutdown': openShutdownModal(null); break;
       case 'edit-shutdown': openShutdownModal(state.shutdowns.find((x) => x.id === t.dataset.id)); break;
-      case 'view-project': ui.projectFilter = t.dataset.id; ui.view = 'schedule'; render(); break;
+      case 'view-project': {
+        const pr = findProject(t.dataset.id);
+        ui.projectFilter = t.dataset.id; ui.view = 'schedule';
+        if (isPipeline(pr) && ui.scenario === 'confirmed') { ui.scenario = 'all'; toast('Showing confirmed + pipeline work'); }
+        render();
+        break;
+      }
+      case 'new-pipeline': openProjectModal(null, { status: 'pipeline' }); break;
+      case 'win-project': openWinModal(findProject(t.dataset.id)); break;
+      case 'lose-project': markLost(findProject(t.dataset.id)); break;
+      case 'reopen-project': commit((st) => { st.projects.find((y) => y.id === t.dataset.id).status = 'pipeline'; }); toast('Back in the pipeline'); break;
       case 'undoBtn': undo(); break;
       case 'redoBtn': redo(); break;
       case 'menuBtn': $('#menuPop').hidden = !$('#menuPop').hidden; break;
@@ -1350,7 +1774,12 @@
       sel.dataset.prev = sel.value;
       return;
     }
-    if (id === 'projectFilter') { ui.projectFilter = e.target.value; render(); }
+    if (id === 'projectFilter') {
+      ui.projectFilter = e.target.value;
+      if (isPipeline(findProject(ui.projectFilter)) && ui.scenario === 'confirmed') { ui.scenario = 'all'; toast('Showing confirmed + pipeline work'); }
+      render();
+    }
+    else if (id === 'scenario') { ui.scenario = e.target.value; render(); }
     else if (id === 'groupBy') { ui.groupBy = e.target.value; render(); }
     else if (id === 'holRegion') { ui.holRegion = e.target.value; render(); }
     else if (id === 'showArchived') { ui.showArchived = e.target.checked; render(); }
@@ -1384,10 +1813,11 @@
     else if (action === 'import') $('#importFile').click();
     else if (action === 'csv') {
       const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-      const lines = [['Person', 'Discipline', 'Type', 'Project', 'Client', 'Start', 'End', 'Hours/day', 'Total hours', 'Tentative', 'Notes'].join(',')];
+      const lines = [['Person', 'Discipline', 'Type', 'Project', 'Project status', 'Win chance', 'Client', 'Start', 'End', 'Hours/day', 'Total hours', 'Tentative', 'Notes'].join(',')];
       for (const a of [...state.allocations].sort((x, y) => (x.start < y.start ? -1 : 1))) {
         const p = findPerson(a.personId) || {}, pr = findProject(a.projectId) || {};
-        lines.push([p.name, p.id ? discName(p) : '', a.type === 'timeoff' ? 'Time off' : 'Project', pr.name, pr.client, a.start, a.end, a.hoursPerDay, hoursInRange(a, a.start, a.end), a.tentative ? 'yes' : '', a.notes].map(q).join(','));
+        lines.push([isSlot(a) ? 'Unfilled slot' : p.name, discNameById(allocDiscipline(a)), a.type === 'timeoff' ? 'Time off' : isSlot(a) ? 'Unfilled slot' : 'Project',
+          pr.name, pr.status || '', pr.status === 'pipeline' ? `${pr.winChance}%` : '', pr.client, a.start, a.end, a.hoursPerDay, hoursInRange(a, a.start, a.end), a.tentative ? 'yes' : '', a.notes].map(q).join(','));
       }
       download(`baseline-schedule-${todayStr()}.csv`, lines.join('\n'), 'text/csv'); toast('CSV exported');
     } else if (action === 'sample') {
