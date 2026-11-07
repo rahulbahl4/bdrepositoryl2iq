@@ -35,6 +35,10 @@ A lightweight resource-planning app in the style of tools like Float: see who is
   - A **Show** switch on the Schedule, People and Report pages chooses between *Confirmed only* (the default), *Confirmed + pipeline* and *Weighted by win chance*.
   - The **Pipeline page** lists every bid with its win chance, decision date, hours needed by discipline, how much is filled and who would be overbooked. Buttons mark a bid **Won** (optionally moving its dates; bookings become firm and unfilled slots stay flagged) or **Lost** (kept for the record, hidden from the schedule, can be reopened).
   - New projects can **copy phases and staffing from an existing job**. Its bookings become unfilled slots by discipline, moved to the new start date.
+- **Capacity vs demand** (Capacity tab): week-by-week charts for the whole team and for each discipline.
+  - Stacked bars show confirmed work, pipeline work by named people, and unfilled slots. A step line shows capacity after leave, public holidays and shutdowns. Weeks that are short are marked ▲ with the hours missing.
+  - Each chart has a plain-English summary (e.g. *"166h short over 6 weeks between Nov 2 and Jan 3. Bids adding to it: …"*), a hover tooltip breaking down each week by bid, and a data table.
+  - Use **Show** (confirmed / + pipeline / weighted) and the **bid buttons** to test what happens if particular bids win. The range can be 12, 26 or 52 weeks, and it exports to CSV.
 - **People**: role, discipline, state/region, capacity; utilization this week and for the next 4 weeks; free hours.
 - **Report**: capacity, scheduled, billable and non-billable hours, time off and utilization by person and by project, for any date range or preset.
 - **Group by** None, Discipline or Project.

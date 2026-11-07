@@ -126,8 +126,8 @@
   function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* storage unavailable */ } }
   function loadUI() { try { return JSON.parse(localStorage.getItem(UI_KEY)) || {}; } catch { return {}; } }
   function saveUI() {
-    const { view, zoom, groupBy, viewStart, scenario } = ui;
-    try { localStorage.setItem(UI_KEY, JSON.stringify({ view, zoom, groupBy, viewStart, scenario })); } catch { /* ignore */ }
+    const { view, zoom, groupBy, viewStart, scenario, fcWeeks } = ui;
+    try { localStorage.setItem(UI_KEY, JSON.stringify({ view, zoom, groupBy, viewStart, scenario, fcWeeks })); } catch { /* ignore */ }
   }
   function commit(mutator, { rerender = true } = {}) {
     undoStack.push(JSON.stringify(state));
@@ -421,6 +421,7 @@
     if (ui.view === 'schedule') renderSchedule();
     else if (ui.view === 'projects') renderProjects();
     else if (ui.view === 'pipeline') renderPipeline();
+    else if (ui.view === 'capacity') renderCapacity();
     else if (ui.view === 'people') renderPeople();
     else if (ui.view === 'holidays') renderHolidays();
     else renderReport();
@@ -902,6 +903,7 @@
     $('#schedule')?.remove();
     main.className = '';
     toolbar.innerHTML = `<button class="btn primary" data-act="new-pipeline">+ Pipeline project</button>
+      <button class="btn" data-act="see-capacity">See capacity vs demand →</button>
       <span class="spacer"></span><span class="hint">Model potential wins without changing anyone's real workload.</span>`;
     const today = todayStr();
     const bids = state.projects.filter((p) => p.status === 'pipeline').sort((a, b) => (a.decisionDate || '9999') < (b.decisionDate || '9999') ? -1 : 1);
@@ -1005,6 +1007,201 @@
     commit((st) => { st.projects.find((y) => y.id === pr.id).status = 'lost'; });
     if (ui.projectFilter === pr.id) ui.projectFilter = '';
     toast('Marked as lost — Ctrl+Z to undo');
+  }
+
+  // ----- capacity vs demand (forecast by discipline, week by week)
+  const FC_RANGES = [[12, 'Next 12 weeks'], [26, 'Next 26 weeks'], [52, 'Next 52 weeks']];
+  const fcExcluded = () => new Set(ui.fcExclude || []);
+  // How much a project's work counts in the forecast: confirmed in full, bids by the Show switch, unless switched off here.
+  function fcWeight(pr, excluded) {
+    if (!pr || pr.status === 'lost') return 0;
+    if (pr.status === 'pipeline' && excluded.has(pr.id)) return 0;
+    return projWeight(pr);
+  }
+  function forecast(weeks) {
+    const excluded = fcExcluded();
+    const discs = [...sortedDisciplines(), { id: '', name: 'No discipline' }];
+    const blank = () => weeks.map((ws) => ({ ws, cap: 0, confirmed: 0, pipeline: 0, unfilled: 0, bids: new Map() }));
+    const rows = new Map(discs.map((d) => [d.id, { id: d.id, name: d.name, people: 0, weeks: blank() }]));
+    const total = { id: '*', name: 'All disciplines', people: state.people.length, weeks: blank() };
+    const first = weeks[0], last = addDays(weeks[weeks.length - 1], 6);
+    for (const p of state.people) {
+      const row = rows.get(rows.has(p.disciplineId) ? p.disciplineId : '');
+      row.people++;
+      weeks.forEach((ws, i) => {
+        const c = personStats(p, ws, addDays(ws, 6), 'confirmed').capacity;
+        row.weeks[i].cap += c; total.weeks[i].cap += c;
+      });
+    }
+    for (const a of state.allocations) {
+      if (a.type !== 'task' || a.end < first || a.start > last) continue;
+      const pr = findProject(a.projectId);
+      const w = fcWeight(pr, excluded);
+      if (!w) continue;
+      const d = allocDiscipline(a);
+      const row = rows.get(rows.has(d) ? d : '');
+      const bucket = isSlot(a) ? 'unfilled' : pr.status === 'pipeline' ? 'pipeline' : 'confirmed';
+      weeks.forEach((ws, i) => {
+        const h = hoursInRange(a, ws, addDays(ws, 6)) * w;
+        if (!h) return;
+        for (const wk of [row.weeks[i], total.weeks[i]]) {
+          wk[bucket] += h;
+          if (pr.status === 'pipeline') wk.bids.set(pr.id, (wk.bids.get(pr.id) || 0) + h);
+        }
+      });
+    }
+    const list = [...rows.values()].filter((r) => r.people || r.weeks.some((x) => x.confirmed + x.pipeline + x.unfilled > 0));
+    return { total, list };
+  }
+  const demandOf = (x) => x.confirmed + x.pipeline + x.unfilled;
+  function shortfall(row) {
+    const short = row.weeks.filter((x) => demandOf(x) > x.cap + 0.05);
+    const hoursShort = short.reduce((sum, x) => sum + demandOf(x) - x.cap, 0);
+    const bids = new Map();
+    for (const x of short) for (const [id, h] of x.bids) bids.set(id, (bids.get(id) || 0) + h);
+    return { weeks: short, hours: hoursShort, bids: [...bids].sort((a, b) => b[1] - a[1]) };
+  }
+  // Axis top = 4 round steps (e.g. 0/25/50/75/100 or 0/50/100/150/200), so tick labels stay whole numbers.
+  function niceMax(v) {
+    if (v <= 0) return 20;
+    const raw = v / 4, p = Math.pow(10, Math.floor(Math.log10(raw)));
+    for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= raw) return 4 * m * p;
+    return 40 * p;
+  }
+  // Stacked weekly demand (confirmed, named pipeline, unfilled) against a capacity step line, all on one hours axis.
+  function fcChart(row, { height = 220, key, width = 760 }) {
+    const W = Math.max(280, Math.round(width)), H = height, L = 46, Rm = 10, T = 22, B = 26;
+    const n = row.weeks.length, band = (W - L - Rm) / n, bw = Math.max(3, band * 0.62);
+    const max = niceMax(Math.max(...row.weeks.map((x) => Math.max(x.cap, demandOf(x)))) * 1.08);
+    const y = (v) => T + (H - T - B) * (1 - v / max);
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * max);
+    let svg = `<svg class="fc-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(row.name)}: weekly demand against capacity">`;
+    for (const t of ticks) {
+      svg += `<line class="fc-gl${t === 0 ? ' base' : ''}" x1="${L}" x2="${W - Rm}" y1="${y(t)}" y2="${y(t)}"/>`
+        + `<text class="fc-tick" x="${L - 6}" y="${y(t) + 3.5}" text-anchor="end">${Math.round(t)}h</text>`;
+    }
+    const every = Math.max(1, Math.ceil(54 / band));
+    row.weeks.forEach((x, i) => {
+      const x0 = L + i * band, bx = x0 + (band - bw) / 2;
+      const segs = [['confirmed', x.confirmed], ['pipeline', x.pipeline], ['unfilled', x.unfilled]].filter((sg) => sg[1] > 0);
+      let acc = 0;
+      segs.forEach(([k, v], j) => {
+        const top = y(acc + v), bottom = y(acc) - (j > 0 ? 2 : 0); // 2px surface gap between stacked segments
+        acc += v;
+        const h = bottom - top;
+        if (h <= 0.5) return;
+        const r = j === segs.length - 1 ? Math.min(4, h / 2, bw / 2) : 0; // rounded data end on the top segment only
+        svg += `<path class="fc-seg fc-${k}" d="M${bx},${bottom} V${top + r} Q${bx},${top} ${bx + r},${top} H${bx + bw - r} Q${bx + bw},${top} ${bx + bw},${top + r} V${bottom} Z"/>`;
+      });
+      const gap = demandOf(x) - x.cap;
+      if (gap > 0.05 && band >= 26) {
+        svg += `<text class="fc-short" x="${x0 + band / 2}" y="${Math.max(11, y(Math.max(demandOf(x), x.cap)) - 6)}" text-anchor="middle">▲ ${Math.round(gap)}h</text>`;
+      }
+      if (i % every === 0) svg += `<text class="fc-tick" x="${x0 + band / 2}" y="${H - 8}" text-anchor="middle">${shortDate(x.ws)}</text>`;
+      svg += `<rect class="fc-hit" data-fc="${key}" data-i="${i}" x="${x0}" y="${T}" width="${band}" height="${H - T - B}"/>`;
+    });
+    let d = '';
+    row.weeks.forEach((x, i) => { const x0 = L + i * band, x1 = x0 + band; d += `${i ? 'V' : 'M' + x0 + ','}${y(x.cap)} H${x1} `; });
+    svg += `<path class="fc-cap" d="${d}"/>`;
+    return svg + '</svg>';
+  }
+  function fcTable(row) {
+    return `<details class="fc-table"><summary>Show data table</summary><div class="table-wrap"><table>
+      <thead><tr><th>Week of</th><th class="num">Capacity</th><th class="num">Confirmed</th><th class="num">Pipeline (named)</th><th class="num">Unfilled slots</th><th class="num">Total demand</th><th class="num">Gap</th></tr></thead>
+      <tbody>${row.weeks.map((x) => { const g = x.cap - demandOf(x); return `<tr><td>${shortDate(x.ws)}</td><td class="num">${hrs(x.cap)}</td><td class="num">${hrs(x.confirmed)}</td>
+        <td class="num">${hrs(x.pipeline)}</td><td class="num">${hrs(x.unfilled)}</td><td class="num">${hrs(demandOf(x))}</td>
+        <td class="num ${g < -0.05 ? 'over-text' : ''}">${g < -0.05 ? `${hrs(-g)} short` : `${hrs(g)} spare`}</td></tr>`; }).join('')}</tbody></table></div></details>`;
+  }
+  function fcSummary(row) {
+    const sf = shortfall(row);
+    if (!sf.weeks.length) {
+      const spare = row.weeks.reduce((sum, x) => sum + Math.max(0, x.cap - demandOf(x)), 0);
+      return `<p class="fc-sum ok"><span class="fc-icon ok" aria-hidden="true">✓</span><span><b>Enough people.</b> ${hrs(spare)} spare across these weeks.</span></p>`;
+    }
+    const range = sf.weeks.length === 1 ? `in the week of ${shortDate(sf.weeks[0].ws)}` : `over ${sf.weeks.length} weeks between ${shortDate(sf.weeks[0].ws)} and ${shortDate(addDays(sf.weeks[sf.weeks.length - 1].ws, 6))}`;
+    const bids = sf.bids.slice(0, 3).map(([id, h]) => `${esc((findProject(id) || {}).name || '')} (${hrs(h)})`).join(', ');
+    return `<p class="fc-sum bad"><span class="fc-icon bad" aria-hidden="true">!</span><span><b>${hrs(sf.hours)} short</b> ${range}.${bids ? ` Bids adding to it: ${bids}.` : ''}</span></p>`;
+  }
+  let fcRows = {};
+  function renderCapacity() {
+    $('#schedule')?.remove();
+    main.className = '';
+    const n = ui.fcWeeks || 12;
+    const start = startOfWeek(todayStr());
+    const weeks = Array.from({ length: n }, (_, i) => addDays(start, i * 7));
+    const bids = state.projects.filter(isPipeline);
+    const excluded = fcExcluded();
+    toolbar.innerHTML = `<label class="toggle">Range <select id="fcWeeks">${FC_RANGES.map(([v, l]) => `<option value="${v}" ${v === n ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      ${scenarioSelect()}<span class="spacer"></span>
+      <button class="btn" data-act="fc-csv">Export CSV</button>`;
+    const { total, list } = forecast(weeks);
+    fcRows = { '*': total };
+    list.forEach((r) => { fcRows[r.id || '_none'] = r; });
+    const legend = `<div class="fc-legend" aria-label="Legend">
+      <span><i class="sw fc-confirmed"></i>Confirmed work</span>
+      ${ui.scenario === 'confirmed' ? '' : '<span><i class="sw fc-pipeline"></i>Pipeline (named people)</span>'}
+      <span><i class="sw fc-unfilled"></i>Unfilled slots</span>
+      <span><i class="ln"></i>Capacity (after leave &amp; holidays)</span>
+      <span><b class="fc-short-key">▲</b>Hours short</span></div>`;
+    const bidChips = bids.length ? `<div class="fc-bids"><span class="hint">Bids included:</span>
+      ${bids.map((pr) => `<button class="chip-toggle ${excluded.has(pr.id) ? '' : 'on'}" data-act="fc-toggle-bid" data-id="${pr.id}" aria-pressed="${!excluded.has(pr.id)}"
+        ${ui.scenario === 'confirmed' ? 'disabled title="Change Show to include pipeline work"' : ''}><span class="dot" style="background:${pr.color}"></span>${esc(pr.name)} · ${pr.winChance}%</button>`).join('')}
+      ${ui.scenario === 'confirmed' ? '<span class="hint">Set <b>Show</b> to include pipeline work to test bids.</span>' : ''}</div>` : '';
+    const ranked = [...list].sort((a, b) => shortfall(b).hours - shortfall(a).hours || a.name.localeCompare(b.name));
+    main.innerHTML = `<div class="page">
+      <h2>Capacity vs demand</h2>
+      <p class="lede">Each discipline's available hours (after leave and public holidays) against the work booked or planned for it, week by week.
+        Use <b>Show</b> and the bid buttons to test what happens if particular bids win.</p>
+      ${bidChips}${legend}
+      <div class="card fc-card"><h3>All disciplines · ${total.people} people</h3>${fcSummary(total)}<div class="fc-chart" data-key="*" data-h="260"></div>${fcTable(total)}</div>
+      <div class="fc-grid">${ranked.map((r) => `<div class="card fc-card"><h3>${esc(r.name)} · ${r.people} ${r.people === 1 ? 'person' : 'people'}</h3>
+        ${fcSummary(r)}<div class="fc-chart" data-key="${r.id || '_none'}" data-h="210"></div>${fcTable(r)}</div>`).join('')}</div>
+    </div>
+    <div class="fc-tip" id="fcTip" hidden></div>`;
+    drawFcCharts();
+  }
+  // Charts are drawn at their real on-screen width so text stays the same size at any width.
+  function drawFcCharts() {
+    document.querySelectorAll('.fc-chart').forEach((el) => {
+      el.innerHTML = fcChart(fcRows[el.dataset.key], { key: el.dataset.key, height: +el.dataset.h, width: el.clientWidth });
+    });
+  }
+  let fcResize = 0;
+  window.addEventListener('resize', () => { clearTimeout(fcResize); fcResize = setTimeout(() => { if (ui.view === 'capacity') drawFcCharts(); }, 120); });
+  function fcTooltip(e) {
+    const tip = $('#fcTip');
+    if (!tip) return;
+    const hit = e.target.closest && e.target.closest('.fc-hit');
+    document.querySelectorAll('.fc-hit.on').forEach((el) => { if (el !== hit) el.classList.remove('on'); });
+    if (!hit) { tip.hidden = true; return; }
+    hit.classList.add('on');
+    const row = fcRows[hit.dataset.fc], x = row.weeks[+hit.dataset.i];
+    const gap = x.cap - demandOf(x);
+    const bidLines = [...x.bids].sort((a, b) => b[1] - a[1]).map(([id, h]) => `<div class="fc-tip-sub">${esc((findProject(id) || {}).name || '')}: ${hrs(h)}</div>`).join('');
+    tip.innerHTML = `<b>${esc(row.name)} · week of ${shortDate(x.ws)}</b>
+      <div><span>Capacity</span><b>${hrs(x.cap)}</b></div>
+      <div><span><i class="sw fc-confirmed"></i>Confirmed</span><b>${hrs(x.confirmed)}</b></div>
+      ${ui.scenario === 'confirmed' ? '' : `<div><span><i class="sw fc-pipeline"></i>Pipeline (named)</span><b>${hrs(x.pipeline)}</b></div>`}
+      <div><span><i class="sw fc-unfilled"></i>Unfilled slots</span><b>${hrs(x.unfilled)}</b></div>
+      ${bidLines ? `<div class="fc-tip-head">From bids</div>${bidLines}` : ''}
+      <div class="fc-tip-gap ${gap < -0.05 ? 'bad' : ''}"><span>${gap < -0.05 ? '▲ Short' : 'Spare'}</span><b>${hrs(Math.abs(gap))}</b></div>`;
+    tip.hidden = false;
+    const r = tip.getBoundingClientRect();
+    let left = e.clientX + 14, top = e.clientY + 14;
+    if (left + r.width > window.innerWidth - 8) left = e.clientX - r.width - 14;
+    if (top + r.height > window.innerHeight - 8) top = e.clientY - r.height - 14;
+    tip.style.left = `${left}px`; tip.style.top = `${top}px`;
+  }
+  main.addEventListener('mousemove', (e) => { if (ui.view === 'capacity') fcTooltip(e); });
+  main.addEventListener('mouseleave', () => { const t = $('#fcTip'); if (t) t.hidden = true; });
+  function fcCsv() {
+    const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [['Discipline', 'Week of', 'Capacity', 'Confirmed', 'Pipeline (named)', 'Unfilled slots', 'Total demand', 'Gap'].join(',')];
+    for (const r of Object.values(fcRows)) for (const x of r.weeks) {
+      lines.push([r.name, x.ws, round1(x.cap), round1(x.confirmed), round1(x.pipeline), round1(x.unfilled), round1(demandOf(x)), round1(x.cap - demandOf(x))].map(q).join(','));
+    }
+    download(`baseline-capacity-${todayStr()}.csv`, lines.join('\n'), 'text/csv');
+    toast('Capacity CSV exported');
   }
 
   // ----- holidays & shutdowns
@@ -1747,6 +1944,15 @@
         break;
       }
       case 'new-pipeline': openProjectModal(null, { status: 'pipeline' }); break;
+      case 'fc-toggle-bid': {
+        const set = fcExcluded();
+        if (set.has(t.dataset.id)) set.delete(t.dataset.id); else set.add(t.dataset.id);
+        ui.fcExclude = [...set];
+        render();
+        break;
+      }
+      case 'fc-csv': fcCsv(); break;
+      case 'see-capacity': ui.view = 'capacity'; if (ui.scenario === 'confirmed') ui.scenario = 'weighted'; render(); break;
       case 'win-project': openWinModal(findProject(t.dataset.id)); break;
       case 'lose-project': markLost(findProject(t.dataset.id)); break;
       case 'reopen-project': commit((st) => { st.projects.find((y) => y.id === t.dataset.id).status = 'pipeline'; }); toast('Back in the pipeline'); break;
@@ -1780,6 +1986,7 @@
       render();
     }
     else if (id === 'scenario') { ui.scenario = e.target.value; render(); }
+    else if (id === 'fcWeeks') { ui.fcWeeks = +e.target.value; render(); }
     else if (id === 'groupBy') { ui.groupBy = e.target.value; render(); }
     else if (id === 'holRegion') { ui.holRegion = e.target.value; render(); }
     else if (id === 'showArchived') { ui.showArchived = e.target.checked; render(); }

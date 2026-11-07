@@ -420,3 +420,69 @@ tbody tr:hover { background: var(--panel-2); }
 .pipe-table .hbar { min-width: 96px; }
 .pipe-table .hbar.win { min-width: 90px; }
 .pipe-table .hint { display: block; }
+
+/* ---------- Capacity vs demand charts ---------- */
+:root {
+  --viz-confirmed: #2a78d6; --viz-pipeline: #eb6834; --viz-unfilled: #1baf7a;
+  --viz-ink: #0b0b0b; --viz-muted: #898781; --viz-grid: #e1e0d9; --viz-axis: #c3c2b7; --viz-critical: #d03b3b; --viz-good: #0ca30c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --viz-confirmed: #3987e5; --viz-pipeline: #d95926; --viz-unfilled: #199e70;
+    --viz-ink: #f0efec; --viz-grid: #2c2c2a; --viz-axis: #383835;
+  }
+}
+.fc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 0 20px; }
+.fc-card { padding-bottom: 6px; }
+.fc-card h3 { border-bottom: 0; padding-bottom: 0; }
+.fc-chart { padding: 0 8px; }
+.fc-svg { display: block; width: 100%; height: auto; }
+.fc-svg .fc-gl { stroke: var(--viz-grid); stroke-width: 1; }
+.fc-svg .fc-gl.base { stroke: var(--viz-axis); }
+.fc-tick { fill: var(--viz-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.fc-seg { stroke: var(--panel); stroke-width: 0; }
+.fc-confirmed { fill: var(--viz-confirmed); background: var(--viz-confirmed); }
+.fc-pipeline { fill: var(--viz-pipeline); background: var(--viz-pipeline); }
+.fc-unfilled { fill: var(--viz-unfilled); background: var(--viz-unfilled); }
+/* Unfilled demand also gets a dashed edge: identity is never colour alone, and it matches slots on the schedule. */
+.fc-svg .fc-unfilled { stroke: var(--viz-ink); stroke-width: 1; stroke-dasharray: 3 2; stroke-opacity: .55; }
+.fc-cap { fill: none; stroke: var(--viz-ink); stroke-width: 2; stroke-linejoin: round; }
+.fc-short { fill: var(--text); font-size: 10.5px; font-weight: 700; }
+.fc-hit { fill: transparent; cursor: crosshair; }
+.fc-hit.on { fill: var(--text); fill-opacity: .05; }
+.fc-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 14px; font-size: 13px; color: var(--muted); }
+.fc-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.sw.fc-unfilled { outline: 1px dashed var(--viz-ink); outline-offset: -1px; }
+.fc-legend .ln { display: inline-block; width: 18px; height: 2px; background: var(--viz-ink); }
+.fc-short-key { color: var(--text); font-size: 11px; }
+.fc-bids { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
+.chip-toggle {
+  display: inline-flex; align-items: center; gap: 2px; height: 30px; padding: 0 12px; border-radius: 999px; font-size: 13px;
+  border: 1px dashed var(--border-strong); background: var(--panel); color: var(--muted); text-decoration: line-through;
+}
+.chip-toggle.on { border-style: solid; color: var(--text); text-decoration: none; background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.chip-toggle:disabled { opacity: .5; cursor: not-allowed; }
+.chip-toggle .dot { margin-right: 6px; }
+.fc-sum { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 8px 16px 4px; font-size: 13.5px; color: var(--text); }
+.fc-icon { flex: none; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 800; margin-top: 1px; }
+.fc-icon.bad { background: var(--viz-critical); }
+.fc-icon.ok { background: var(--viz-good); }
+.fc-table { margin: 0 16px 10px; font-size: 13px; }
+.fc-table summary { cursor: pointer; color: var(--muted); padding: 4px 0; }
+.fc-table table { margin-top: 6px; }
+.fc-table th, .fc-table td { padding: 6px 10px; }
+.fc-tip {
+  position: fixed; z-index: 150; min-width: 230px; padding: 10px 12px; border-radius: 10px; pointer-events: none;
+  background: var(--panel); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow); font-size: 12.5px;
+  display: grid; gap: 4px;
+}
+.fc-tip > div { display: flex; justify-content: space-between; gap: 16px; }
+.fc-tip > div span { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.fc-tip b { font-variant-numeric: tabular-nums; }
+.fc-tip .sw { width: 10px; height: 10px; }
+.fc-tip-head { color: var(--muted); margin-top: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.fc-tip-sub { padding-left: 10px; color: var(--muted); display: block !important; }
+.fc-tip-gap { border-top: 1px solid var(--border); padding-top: 5px; margin-top: 2px; }
+.fc-tip-gap.bad span, .fc-tip-gap.bad b { color: var(--viz-critical); }
+@media (max-width: 720px) { .fc-grid { grid-template-columns: 1fr; } }
