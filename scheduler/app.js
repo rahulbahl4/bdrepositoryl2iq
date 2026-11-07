@@ -1,10 +1,17 @@
-/* Crewplan — a lightweight team resource scheduler.
+/* Baseline — a lightweight team resource scheduler.
  * Plain JS, no dependencies. Data is stored in localStorage. */
 'use strict';
 (() => {
   // ---------------------------------------------------------------- constants
-  const STORE_KEY = 'crewplan:data:v1';
-  const UI_KEY = 'crewplan:ui:v1';
+  const STORE_KEY = 'baseline:data:v1';
+  const UI_KEY = 'baseline:ui:v1';
+  // The app used to be called Crewplan: carry saved data over to the new keys once.
+  try {
+    for (const [oldKey, newKey] of [['crewplan:data:v1', STORE_KEY], ['crewplan:ui:v1', UI_KEY]]) {
+      const old = localStorage.getItem(oldKey);
+      if (old !== null && localStorage.getItem(newKey) === null) localStorage.setItem(newKey, old);
+    }
+  } catch { /* storage unavailable */ }
   const COLORS = ['#3b6cf6', '#00a389', '#f2994a', '#e05252', '#9b51e0', '#2d9cdb', '#27ae60', '#c99410', '#d94f9c', '#5b6b7f'];
   const AVATAR_COLORS = ['#5b7cfa', '#13a383', '#e48a3c', '#c85a8e', '#7b61d9', '#2f8fc9', '#4c9a50', '#b8862a'];
   const LANE = 30, PAD = 7, LOAD_SPACE = 10, MIN_ROW = 52;
@@ -1369,7 +1376,7 @@
   }
 
   function menuAction(action) {
-    if (action === 'export') { download(`crewplan-${todayStr()}.json`, JSON.stringify(state, null, 2), 'application/json'); toast('Exported'); }
+    if (action === 'export') { download(`baseline-${todayStr()}.json`, JSON.stringify(state, null, 2), 'application/json'); toast('Exported'); }
     else if (action === 'import') $('#importFile').click();
     else if (action === 'csv') {
       const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -1378,7 +1385,7 @@
         const p = findPerson(a.personId) || {}, pr = findProject(a.projectId) || {};
         lines.push([p.name, p.id ? discName(p) : '', a.type === 'timeoff' ? 'Time off' : 'Project', pr.name, pr.client, a.start, a.end, a.hoursPerDay, hoursInRange(a, a.start, a.end), a.tentative ? 'yes' : '', a.notes].map(q).join(','));
       }
-      download(`crewplan-schedule-${todayStr()}.csv`, lines.join('\n'), 'text/csv'); toast('CSV exported');
+      download(`baseline-schedule-${todayStr()}.csv`, lines.join('\n'), 'text/csv'); toast('CSV exported');
     } else if (action === 'sample') {
       if (!confirm('Replace current data with sample data?')) return;
       commit((st) => Object.assign(st, normalize(seed()))); toast('Sample data loaded — Ctrl+Z to undo');
@@ -1397,7 +1404,7 @@
       if (!validData(data)) throw new Error('bad shape');
       commit((st) => Object.assign(st, normalize({ people: data.people, projects: data.projects, allocations: data.allocations, holidays: data.holidays, shutdowns: data.shutdowns, disciplines: data.disciplines })));
       toast('Data imported');
-    } catch { toast('That file is not valid Crewplan data'); }
+    } catch { toast('That file is not valid Baseline data'); }
   });
 
   document.addEventListener('keydown', (e) => {

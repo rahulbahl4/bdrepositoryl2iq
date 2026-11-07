@@ -1,6 +1,6 @@
 # bdrepositoryl2iq
 
-## Crewplan — team resource scheduler (`scheduler/`)
+## Baseline — team resource scheduler (`scheduler/`)
 
 A lightweight resource-planning app in the style of tools like Float: see who is working on what, when, and how booked everyone is.
 
