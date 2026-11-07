@@ -52,6 +52,7 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const round1 = (n) => Math.round(n * 10) / 10;
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const LEAVE_TYPES = ['Annual leave', "Personal/carer's leave", 'Sick leave', 'Long service leave', 'RDO', 'Training', 'Conference', 'Site induction', 'Other'];
   const hrs = (n) => `${round1(n)}h`;
   const pct = (n) => `${Math.round(n)}%`;
   const initials = (name) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || '?';
@@ -106,6 +107,7 @@
     }
     // An allocation with no person is an unfilled slot: demand for a discipline, not yet named.
     for (const a of d.allocations) {
+      if (a.type === 'timeoff' && !LEAVE_TYPES.includes(a.leaveType)) a.leaveType = guessLeaveType(a.notes) || 'Annual leave';
       if (!a.personId) a.personId = null;
       if (a.personId || a.type !== 'task') delete a.disciplineId;
       else a.disciplineId = d.disciplines.some((x) => x.id === a.disciplineId) ? a.disciplineId : '';
@@ -218,7 +220,7 @@
       start: addDays(w, s), end: addDays(w, s + len - 1), hoursPerDay: h, notes: '', tentative: false, ...extra,
     });
     const T = (pi, s, len, notes = 'Vacation') => ({
-      id: uid(), type: 'timeoff', personId: people[pi].id, projectId: null,
+      id: uid(), type: 'timeoff', leaveType: guessLeaveType(notes) || 'Annual leave', personId: people[pi].id, projectId: null,
       start: addDays(w, s), end: addDays(w, s + len - 1), hoursPerDay: people[pi].capacity, notes, tentative: false,
     });
     const allocations = [
@@ -310,6 +312,17 @@
     </select>`;
 
   // ----- pipeline: how much each booking counts under the chosen view
+  // Guess a leave type from free text (older data, pasted lists): "AL", "sick", "LSL", "rdo"...
+  function guessLeaveType(text) {
+    const t = String(text || '').toLowerCase().trim();
+    if (!t) return '';
+    const exact = LEAVE_TYPES.find((x) => x.toLowerCase() === t);
+    if (exact) return exact;
+    const rules = [[/^(al|annual|holiday|vacation|leave)/, 'Annual leave'], [/carer|personal|compassion|bereave/, "Personal/carer's leave"], [/sick|ill|unwell/, 'Sick leave'],
+      [/^lsl|long service/, 'Long service leave'], [/rdo|rostered|day off/, 'RDO'], [/train|course/, 'Training'], [/conf/, 'Conference'], [/induct/, 'Site induction']];
+    const hit = rules.find(([re]) => re.test(t));
+    return hit ? hit[1] : '';
+  }
   const SCENARIOS = [['confirmed', 'Confirmed only'], ['all', 'Confirmed + pipeline'], ['weighted', 'Weighted by win chance']];
   const isSlot = (a) => a.type === 'task' && !a.personId;
   const isPipeline = (pr) => !!pr && pr.status === 'pipeline';
@@ -445,6 +458,7 @@
       .map((p) => `<option value="${p.id}" ${p.id === ui.projectFilter ? 'selected' : ''}>${esc(p.name)}${isPipeline(p) ? ` (pipeline ${p.winChance}%)` : ''}</option>`).join('');
     toolbar.innerHTML = `
       <button class="btn primary" data-act="new-alloc">+ Schedule</button>
+      <button class="btn" data-act="bulk-leave">+ Time off</button>
       <div class="btn-group">
         <button class="btn" data-act="prev" title="Earlier">&#8249;</button>
         <button class="btn" data-act="today">Today</button>
@@ -731,9 +745,9 @@
     const color = pr ? pr.color : '#888';
     const slot = isSlot(a);
     const pipe = isPipeline(pr);
-    const title = isOff ? (a.notes || 'Time off') : slot ? (discNameById(a.disciplineId) || 'Unfilled slot') : (pr ? pr.name : 'Unknown project');
+    const title = isOff ? (a.leaveType || 'Time off') : slot ? (discNameById(a.disciplineId) || 'Unfilled slot') : (pr ? pr.name : 'Unknown project');
     const total = hoursInRange(a, a.start, a.end);
-    const sub = isOff ? 'Time off' : slot ? `${pr ? pr.name : ''} · ${round1(a.hoursPerDay)}h/d` : `${round1(a.hoursPerDay)}h/d${g.width > 150 ? ` · ${hrs(total)}` : ''}`;
+    const sub = isOff ? (a.notes && a.notes !== a.leaveType ? a.notes : (+a.hoursPerDay < ((findPerson(a.personId) || {}).capacity || 8) ? `${round1(a.hoursPerDay)}h/d` : '')) : slot ? `${pr ? pr.name : ''} · ${round1(a.hoursPerDay)}h/d` : `${round1(a.hoursPerDay)}h/d${g.width > 150 ? ` · ${hrs(total)}` : ''}`;
     const dim = ui.projectFilter && a.projectId !== ui.projectFilter;
     const outside = outsideProject(a, pr);
     const cls = ['bar', isOff ? 'timeoff' : '', a.tentative ? 'tentative' : '', pipe ? 'pipeline' : '', slot ? 'slot' : '',
@@ -792,6 +806,7 @@
     main.className = '';
     toolbar.innerHTML = `<button class="btn primary" data-act="new-person">+ Add person</button>
       <button class="btn" data-act="new-discipline">+ Discipline</button>
+      <button class="btn" data-act="bulk-leave">+ Time off</button>
       <span class="spacer"></span>${scenarioSelect()}`;
     const wk = startOfWeek(todayStr());
     const rows = [...state.people].sort((a, b) => a.name.localeCompare(b.name)).map((p) => {
@@ -879,10 +894,28 @@
       <div class="card"><h3>By person</h3><div class="table-wrap"><table>
         <thead><tr><th>Person</th><th class="num">Capacity</th><th class="num">Scheduled</th><th class="num">Billable</th><th class="num">Non-billable</th><th class="num">Time off</th><th class="num">Holidays &amp; shutdowns</th><th class="num">Worked on those days</th><th>Utilization</th></tr></thead>
         <tbody>${peopleRows || '<tr><td colspan="9">No people.</td></tr>'}</tbody></table></div></div>
+      ${leaveByType(s, e)}
       <div class="card"><h3>By project</h3><div class="table-wrap"><table>
         <thead><tr><th>Project</th><th>Client</th><th class="num">People</th><th>Hours</th><th class="num">Share</th></tr></thead>
         <tbody>${projRows || '<tr><td colspan="5">Nothing scheduled in this range.</td></tr>'}</tbody></table></div></div>
     </div>`;
+  }
+
+  function leaveByType(s, e) {
+    const by = new Map();
+    for (const a of state.allocations) {
+      if (a.type !== 'timeoff' || a.end < s || a.start > e) continue;
+      const h = hoursInRange(a, s, e);
+      if (!h) continue;
+      const k = a.leaveType || 'Other';
+      const cur = by.get(k) || { h: 0, people: new Set() };
+      cur.h += h; cur.people.add(a.personId); by.set(k, cur);
+    }
+    if (!by.size) return '';
+    const rows = [...by].sort((a, b) => b[1].h - a[1].h);
+    return `<div class="card"><h3>Time off by type</h3><div class="table-wrap"><table>
+      <thead><tr><th>Type</th><th class="num">People</th><th class="num">Hours</th><th class="num">Days (at 8h)</th></tr></thead>
+      <tbody>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v.people.size}</td><td class="num">${hrs(v.h)}</td><td class="num">${round1(v.h / 8)}</td></tr>`).join('')}</tbody></table></div></div>`;
   }
 
   // ----- pipeline (potential wins)
@@ -1406,16 +1439,18 @@
           <label class="field">Hours per day<input type="number" name="hoursPerDay" min="0.25" max="24" step="0.25" value="${a.hoursPerDay}"></label>
           <label class="check proj-only"><input type="checkbox" name="tentative" ${a.tentative ? 'checked' : ''}> Tentative</label>
         </div>
+        <label class="field off-only">Leave type<select name="leaveType">${LEAVE_TYPES.map((x) => `<option ${x === (a.leaveType || 'Annual leave') ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
         <label class="field"><span class="notes-label">Notes</span><textarea name="notes" rows="2" placeholder="Optional details">${esc(a.notes)}</textarea></label>
         <p class="summary" id="allocSummary"></p>
         <div class="field slot-only"><span>Who could fill it</span><div class="suggest" id="suggest"></div></div>`,
-      footer: saveFooter(isNew ? '' : `<button type="button" class="btn danger" id="delAlloc">Delete</button><button type="button" class="btn" id="dupAlloc">Duplicate</button>`),
+      footer: saveFooter(isNew ? '' : `<button type="button" class="btn danger" id="delAlloc">Delete</button>${a.seriesId ? '<button type="button" class="btn danger" id="delSeries" title="Delete this and every later day in the repeating series">Delete series from here</button>' : ''}<button type="button" class="btn" id="dupAlloc">Duplicate</button>`),
       mount(form) {
         const sync = () => {
           const fd = new FormData(form);
           const off = fd.get('type') === 'timeoff';
           const slot = !off && !fd.get('personId');
           form.querySelectorAll('.proj-only').forEach((el) => { el.style.display = off ? 'none' : ''; });
+          form.querySelectorAll('.off-only').forEach((el) => { el.style.display = off ? '' : 'none'; });
           form.querySelectorAll('.slot-only').forEach((el) => { el.style.display = slot ? '' : 'none'; });
           $('.notes-label', form).textContent = off ? 'Reason' : 'Notes';
           let s = fd.get('start'), e = fd.get('end');
@@ -1449,6 +1484,11 @@
               }
               const ph = pr.phases.filter((x) => x.start <= e && x.end >= s).map((x) => x.name);
               if (ph.length) msg += `<br>Phase${ph.length > 1 ? 's' : ''}: ${ph.map(esc).join(', ')}`;
+            }
+            if (p && off) {
+              const hits = state.allocations.filter((x) => x.personId === p.id && x.type === 'task' && x.start <= e && x.end >= s && allocVisible(x));
+              if (hits.length) msg += `<br><span class="hol-note">Overlaps ${hits.map((x) => esc((findProject(x.projectId) || {}).name || '')).join(', ')}.
+                To hand that work over or push it back, use <b>+ Time off</b> on the Schedule toolbar.</span>`;
             }
             if (p) {
               const names = [];
@@ -1503,6 +1543,11 @@
             commit((st) => { st.allocations = st.allocations.filter((x) => x.id !== a.id); });
             closeModal(); toast('Deleted — Ctrl+Z to undo');
           });
+          if (a.seriesId) $('#delSeries', form).addEventListener('click', () => {
+            const n = state.allocations.filter((x) => x.seriesId === a.seriesId && x.start >= a.start).length;
+            commit((st) => { st.allocations = st.allocations.filter((x) => !(x.seriesId === a.seriesId && x.start >= a.start)); });
+            closeModal(); toast(`Deleted ${n} day${n === 1 ? '' : 's'} of the series — Ctrl+Z to undo`);
+          });
           $('#dupAlloc', form).addEventListener('click', () => {
             const len = diffDays(a.start, a.end) + 1;
             commit((st) => st.allocations.push({ ...findAlloc(a.id), id: uid(), start: addDays(a.start, len), end: addDays(a.end, len) }));
@@ -1540,6 +1585,7 @@
         type, personId, projectId: type === 'task' ? fd.get('projectId') : null,
         start, end, hoursPerDay, notes: (fd.get('notes') || '').trim(), tentative: type === 'task' && fd.get('tentative') === 'on',
       };
+      if (type === 'timeoff') data.leaveType = fd.get('leaveType') || 'Annual leave';
       if (!personId) data.disciplineId = fd.get('disciplineId') || '';
       return data;
     }
@@ -1564,6 +1610,356 @@
         </div>`;
       }).join('') + (shown.length > 8 ? `<p class="hint" style="margin:4px 0 0">${shown.length - 8} more not shown.</p>` : '')
         + (ui.scenario === 'confirmed' ? '' : `<p class="hint" style="margin:4px 0 0">Free time is based on "${SCENARIOS.find((x) => x[0] === ui.scenario)[1]}".</p>`);
+    }
+  }
+
+  // ================================================================ bulk time off
+  // Pick people (or paste a list), set dates or a repeating pattern, then review clashes with booked work.
+  const isWorkday = (d) => !isWeekend(d);
+  const nextWorkday = (d) => { while (isWeekend(d)) d = addDays(d, 1); return d; };
+  // Date of the nth working day counting from `start` (n >= 1).
+  function addWorkdays(start, n) {
+    let d = nextWorkday(start), k = 1;
+    while (k < n) { d = addDays(d, 1); if (isWorkday(d)) k++; }
+    return d;
+  }
+  function parseFlexDate(str) {
+    const t = String(str || '').trim();
+    let m;
+    if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t))) return valid(`${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`);
+    if ((m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/.exec(t))) {
+      const y = m[3].length === 2 ? `20${m[3]}` : m[3];
+      return valid(`${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`); // Australian day/month order
+    }
+    if ((m = /^(\d{1,2})\s+([a-z]{3,})\.?\s+(\d{4})$/i.exec(t))) {
+      const mi = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(m[2].slice(0, 3).toLowerCase());
+      if (mi >= 0) return valid(`${m[3]}-${String(mi + 1).padStart(2, '0')}-${m[1].padStart(2, '0')}`);
+    }
+    return null;
+    function valid(iso) { const d = toDate(iso); return !isNaN(d) && fmt(d) === iso ? iso : null; }
+  }
+  const normName = (x) => String(x || '').toLowerCase().replace(/[^a-z\s'-]/g, ' ').replace(/\s+/g, ' ').trim();
+  function editDistance(a, b) {
+    const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 1; j <= b.length; j++) dp[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    return dp[a.length][b.length];
+  }
+  // Match a typed name to a person: exact, "N. Patel", first or last name alone (if unique), or a near spelling.
+  function matchPerson(raw) {
+    const q = normName(raw);
+    if (!q) return null;
+    const people = state.people.map((p) => ({ p, n: normName(p.name), t: normName(p.name).split(' ') }));
+    const exact = people.find((x) => x.n === q);
+    if (exact) return { person: exact.p, close: false };
+    const qt = q.split(' ');
+    const qf = qt[0], ql = qt[qt.length - 1];
+    let cands = people.filter(({ t }) => {
+      const f = t[0], l = t[t.length - 1];
+      if (qt.length === 1) return qf === f || qf === l;
+      return (ql === l && (qf === f || (qf.length <= 2 && qf[0] === f[0]))) || (qf === l && ql === f);
+    });
+    if (cands.length !== 1) cands = people.filter((x) => editDistance(x.n, q) <= Math.max(1, Math.floor(q.length / 6)));
+    return cands.length === 1 ? { person: cands[0].p, close: true } : null;
+  }
+  // Read pasted rows: name, start date, [end date], [leave type], [hours]. Tabs (from Excel) or commas.
+  function parseLeaveList(text) {
+    const ok = [], bad = [];
+    String(text || '').split(/\r?\n/).forEach((line, idx) => {
+      const raw = line.trim();
+      if (!raw) return;
+      const cells = (raw.includes('\t') ? raw.split('\t') : raw.split(/\s*[,;]\s*/)).map((c) => c.trim()).filter((c) => c !== '');
+      const [name, ...rest] = cells;
+      const dates = [], other = [];
+      for (const c of rest) { const d = parseFlexDate(c); if (d) dates.push(d); else other.push(c); }
+      if (!dates.length) { if (idx === 0) return; bad.push({ line: raw, why: 'no date found' }); return; } // first line may be a header
+      const m = matchPerson(name);
+      if (!m) { bad.push({ line: raw, why: `no one called "${name}"` }); return; }
+      let leaveType = '', hours = null, notes = [];
+      for (const c of other) {
+        if (/^\d+(\.\d+)?h?$/i.test(c) && +c.replace(/h/i, '') <= 24) hours = +c.replace(/h/i, '');
+        else if (!leaveType && guessLeaveType(c)) leaveType = guessLeaveType(c);
+        else notes.push(c);
+      }
+      let [start, end] = [dates[0], dates[1] || dates[0]];
+      if (end < start) [start, end] = [end, start];
+      ok.push({ person: m.person, close: m.close, typed: name, start, end, leaveType, hours, notes: notes.join(', ') });
+    });
+    return { ok, bad };
+  }
+  // Every working-day occurrence of a weekday, every `every` weeks, from start to until.
+  function repeatDates(weekday, every, start, until) {
+    const out = [];
+    let d = start;
+    while (dow(d) !== weekday) d = addDays(d, 1);
+    for (; d <= until; d = addDays(d, 7 * every)) out.push(d);
+    return out;
+  }
+  // Booked work for a person that overlaps the given leave days (working days only).
+  function leaveClashes(person, ranges) {
+    const out = [];
+    for (const a of state.allocations) {
+      if (a.personId !== person.id || a.type !== 'task') continue;
+      const pr = findProject(a.projectId);
+      if (pr && pr.status === 'lost') continue;
+      const covered = [];
+      for (const [s, e] of ranges) {
+        const cs = maxS(s, a.start), ce = minS(e, a.end);
+        if (cs <= ce && workdays(cs, ce)) covered.push([cs, ce]);
+      }
+      if (covered.length) out.push({ alloc: a, covered, days: covered.reduce((n, [cs, ce]) => n + workdays(cs, ce), 0) });
+    }
+    return out;
+  }
+  // Split a booking around the leave days; `cover` turns the leave-day pieces into unfilled slots.
+  function handOver(a, covered, person) {
+    covered = [...covered].sort((x, y) => (x[0] < y[0] ? -1 : 1));
+    const pieces = [];
+    let cur = a.start;
+    for (const [cs, ce] of covered) {
+      if (cur < cs) pieces.push({ ...a, start: cur, end: addDays(cs, -1) });
+      pieces.push({ ...a, start: cs, end: ce, personId: null, disciplineId: person.disciplineId || '', tentative: false,
+        notes: `Cover for ${person.name} (on leave)${a.notes ? ` · ${a.notes}` : ''}` });
+      cur = addDays(ce, 1);
+    }
+    if (cur <= a.end) pieces.push({ ...a, start: cur, end: a.end });
+    return pieces.filter((x) => workdays(x.start, x.end) > 0).map((x, i) => ({ ...x, id: i === 0 && x.personId ? a.id : uid() }));
+  }
+  // Pause a booking for the leave: anything from the leave onwards resumes the next working day after it.
+  function pushBack(a, covered) {
+    const cs = covered.reduce((m, r) => minS(m, r[0]), covered[0][0]);
+    const ce = covered.reduce((m, r) => maxS(m, r[1]), covered[0][1]);
+    const pieces = [];
+    if (cs > a.start && workdays(a.start, addDays(cs, -1))) pieces.push({ ...a, end: addDays(cs, -1) });
+    const n = workdays(maxS(cs, a.start), a.end);
+    const resume = nextWorkday(addDays(ce, 1));
+    if (n) pieces.push({ ...a, id: pieces.length ? uid() : a.id, start: resume, end: addWorkdays(resume, n) });
+    return pieces;
+  }
+
+  function openBulkLeaveModal(preset = {}) {
+    if (!state.people.length) { toast('Add a person first'); return; }
+    const t = todayStr();
+    const discs = sortedDisciplines().filter((d) => state.people.some((p) => p.disciplineId === d.id));
+    const regions = [...new Set(state.people.map((p) => p.region).filter(Boolean))].sort();
+    const people = [...state.people].sort((a, b) => a.name.localeCompare(b.name));
+    const WD = [[1, 'Monday'], [2, 'Tuesday'], [3, 'Wednesday'], [4, 'Thursday'], [5, 'Friday']];
+    let review = null; // the plan built at the review step
+    modal({
+      title: 'Add time off',
+      wide: true,
+      body: `
+        <div class="step step-1">
+          <div class="seg">
+            <label><input type="radio" name="source" value="pick" checked> Choose people</label>
+            <label><input type="radio" name="source" value="paste"> Paste a list</label>
+          </div>
+          <div class="src-pick">
+            <div class="field"><span>Who</span>
+              <div class="quick-picks">
+                <button type="button" class="chip-toggle on" data-pick="all">Everyone</button>
+                <button type="button" class="chip-toggle on" data-pick="none">Clear</button>
+                ${discs.map((d) => `<button type="button" class="chip-toggle on" data-pick="d:${d.id}">${esc(d.name)}</button>`).join('')}
+                ${regions.map((r) => `<button type="button" class="chip-toggle on" data-pick="r:${esc(r)}">${esc(r)}</button>`).join('')}
+              </div>
+              <div class="pick-list">${people.map((p) => `<label class="pick"><input type="checkbox" name="who" value="${p.id}" ${(preset.personIds || []).includes(p.id) ? 'checked' : ''}>
+                <span class="avatar" style="background:${p.color || hashColor(p.name)}">${esc(initials(p.name))}</span><span>${esc(p.name)}<small>${esc([discName(p), p.region].filter(Boolean).join(' · '))}</small></span></label>`).join('')}</div>
+              <span class="hint" id="pickCount"></span>
+            </div>
+            <div class="seg">
+              <label><input type="radio" name="when" value="range" checked> Dates</label>
+              <label><input type="radio" name="when" value="repeat"> Repeating (RDOs, part-time days)</label>
+            </div>
+            <div class="grid2 when-range">
+              <label class="field">First day<input type="date" name="start" value="${preset.start || t}"></label>
+              <label class="field">Last day<input type="date" name="end" value="${preset.end || addDays(t, 4)}"></label>
+            </div>
+            <div class="when-repeat">
+              <div class="grid2">
+                <label class="field">Day<select name="weekday">${WD.map(([v, l]) => `<option value="${v}" ${v === 5 ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+                <label class="field">How often<select name="every"><option value="1">Every week</option><option value="2" selected>Every 2nd week (e.g. RDO)</option><option value="3">Every 3rd week</option><option value="4">Every 4th week</option></select></label>
+              </div>
+              <div class="grid2">
+                <label class="field">Starting from<input type="date" name="rstart" value="${t}"></label>
+                <label class="field">Until<input type="date" name="runtil" value="${addDays(t, 182)}"></label>
+              </div>
+              <p class="hint" id="repeatHint" style="margin:0"></p>
+            </div>
+            <div class="grid2">
+              <label class="field">Leave type<select name="leaveType">${LEAVE_TYPES.map((x) => `<option>${x}</option>`).join('')}</select></label>
+              <label class="field">Hours per day<input type="number" name="hours" min="0.25" max="24" step="0.25" placeholder="Full day"></label>
+            </div>
+            <label class="field">Notes<input name="notes" placeholder="Optional, e.g. Christmas break"></label>
+          </div>
+          <div class="src-paste">
+            <label class="field">Paste rows from a spreadsheet or HR export
+              <textarea name="list" rows="8" placeholder="Noah Patel, 21/12/2026, 08/01/2027, Annual leave\nM. Chen, 2026-11-20, Sick\nLucas Kim\t15/12/2026\t15/12/2026\tTraining\t4"></textarea></label>
+            <p class="hint" style="margin:0">One row each: <b>name, first day, last day</b> (optional), <b>leave type</b> (optional, e.g. AL, sick, LSL, RDO), <b>hours</b> (optional, for part days).
+              Copying straight from Excel works. Dates can be 21/12/2026 or 2026-12-21. A header row is ignored.</p>
+          </div>
+        </div>
+        <div class="step step-2" hidden><div id="reviewBox"></div></div>`,
+      footer: `<button type="button" class="btn" id="backBtn" hidden>&larr; Back</button><span class="spacer"></span>
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="button" class="btn primary" id="reviewBtn">Review &rarr;</button>
+        <button class="btn primary" id="saveBtn" hidden>Add time off</button>`,
+      mount(form) {
+        const err = $('.error', form);
+        const sync = () => {
+          const fd = new FormData(form);
+          const paste = fd.get('source') === 'paste';
+          $('.src-pick', form).hidden = paste;
+          $('.src-paste', form).hidden = !paste;
+          const rep = fd.get('when') === 'repeat';
+          $('.when-range', form).hidden = rep;
+          $('.when-repeat', form).hidden = !rep;
+          const n = fd.getAll('who').length;
+          $('#pickCount', form).textContent = `${n} ${n === 1 ? 'person' : 'people'} selected`;
+          if (rep) {
+            const ds = fd.get('rstart') && fd.get('runtil') ? repeatDates(+fd.get('weekday'), +fd.get('every'), fd.get('rstart'), fd.get('runtil')) : [];
+            $('#repeatHint', form).textContent = ds.length ? `${ds.length} days, first ${shortDate(ds[0])}, then ${ds[1] ? shortDate(ds[1]) : '—'}${ds[2] ? `, ${shortDate(ds[2])} and so on` : ''}. Public holidays are skipped for each person.` : 'No matching days in that range.';
+          }
+        };
+        form.addEventListener('input', sync);
+        form.addEventListener('change', sync);
+        sync();
+        form.querySelector('.quick-picks').addEventListener('click', (ev) => {
+          const b = ev.target.closest('[data-pick]');
+          if (!b) return;
+          const k = b.dataset.pick;
+          const boxes = [...form.querySelectorAll('input[name=who]')];
+          const match = (id) => { const p = findPerson(id); return k === 'all' || (k.startsWith('d:') && p.disciplineId === k.slice(2)) || (k.startsWith('r:') && p.region === k.slice(2)); };
+          if (k === 'none') boxes.forEach((x) => { x.checked = false; });
+          else boxes.forEach((x) => { if (match(x.value)) x.checked = true; });
+          sync();
+        });
+        const showStep = (n) => {
+          $('.step-1', form).hidden = n !== 1; $('.step-2', form).hidden = n !== 2;
+          $('#backBtn', form).hidden = n !== 2; $('#reviewBtn', form).hidden = n !== 1; $('#saveBtn', form).hidden = n !== 2;
+          err.hidden = true;
+        };
+        $('#backBtn', form).addEventListener('click', () => showStep(1));
+        $('#reviewBtn', form).addEventListener('click', () => {
+          const plan = buildPlan(new FormData(form));
+          if (typeof plan === 'string') { err.textContent = plan; err.hidden = false; return; }
+          review = plan;
+          $('#reviewBox', form).innerHTML = renderReview(plan);
+          showStep(2);
+        });
+        // Enter on step 1 goes to review instead of saving.
+        form.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !$('.step-1', form).hidden && ev.target.tagName !== 'TEXTAREA') { ev.preventDefault(); $('#reviewBtn', form).click(); } });
+        $('#reviewBox', form).addEventListener('change', (ev) => {
+          if (ev.target.id === 'allActions') {
+            form.querySelectorAll('select[data-clash]').forEach((sel) => { if ([...sel.options].some((o) => o.value === ev.target.value && !o.disabled)) sel.value = ev.target.value; });
+          }
+        });
+      },
+      onSubmit(fd, form) {
+        if (!review) return 'Review the time off first.';
+        const actions = {};
+        form.querySelectorAll('select[data-clash]').forEach((sel) => { actions[sel.dataset.clash] = sel.value; });
+        let handed = 0, pushed = 0;
+        commit((st) => {
+          st.allocations.push(...review.leave);
+          for (const c of review.clashes) {
+            const act = actions[c.key];
+            if (act === 'keep') continue;
+            const idx = st.allocations.findIndex((x) => x.id === c.alloc.id);
+            if (idx < 0) continue;
+            const current = st.allocations[idx];
+            const pieces = act === 'handover' ? handOver(current, c.covered, c.person) : pushBack(current, c.covered);
+            st.allocations.splice(idx, 1, ...pieces);
+            if (act === 'handover') handed++; else pushed++;
+          }
+        });
+        const who = new Set(review.leave.map((x) => x.personId)).size;
+        toast(`Time off added for ${who} ${who === 1 ? 'person' : 'people'}${handed ? ` · ${handed} handed over as unfilled slots` : ''}${pushed ? ` · ${pushed} pushed back` : ''}`);
+      },
+    });
+
+    // Turns the form into the leave to add and the clashes it causes.
+    function buildPlan(fd) {
+      const entries = []; // { person, ranges: [[s,e]], leaveType, hours, notes, seriesId }
+      let skipped = [], fuzzy = [];
+      if (fd.get('source') === 'paste') {
+        const { ok, bad } = parseLeaveList(fd.get('list'));
+        if (!ok.length) return bad.length ? `Couldn't read any rows. First problem: "${bad[0].line}" (${bad[0].why}).` : 'Paste at least one row.';
+        skipped = bad;
+        fuzzy = ok.filter((x) => x.close);
+        for (const r of ok) entries.push({ person: r.person, ranges: [[r.start, r.end]], leaveType: r.leaveType || fd.get('leaveType') || 'Annual leave', hours: r.hours, notes: r.notes });
+      } else {
+        const ids = fd.getAll('who');
+        if (!ids.length) return 'Choose at least one person.';
+        const hours = fd.get('hours') ? +fd.get('hours') : null;
+        if (hours !== null && !(hours > 0 && hours <= 24)) return 'Hours per day must be between 0.25 and 24, or blank for a full day.';
+        const base = { leaveType: fd.get('leaveType'), hours, notes: (fd.get('notes') || '').trim() };
+        if (fd.get('when') === 'repeat') {
+          const rs = fd.get('rstart'), ru = fd.get('runtil');
+          if (!rs || !ru || ru < rs) return 'Choose when the repeating time off starts and ends.';
+          if (diffDays(rs, ru) > 731) return 'Repeating time off can run for up to two years at a time.';
+          const days = repeatDates(+fd.get('weekday'), +fd.get('every'), rs, ru);
+          if (!days.length) return 'No matching days in that range.';
+          for (const id of ids) {
+            const person = findPerson(id);
+            const mine = days.filter((d) => !closureFor(person, d));
+            if (mine.length) entries.push({ person, ranges: mine.map((d) => [d, d]), ...base, seriesId: uid() });
+          }
+        } else {
+          let s = fd.get('start'), e = fd.get('end');
+          if (!s || !e) return 'Choose the first and last day.';
+          if (e < s) [s, e] = [e, s];
+          if (!workdays(s, e)) return 'Those dates are all weekend days.';
+          for (const id of ids) entries.push({ person: findPerson(id), ranges: [[s, e]], ...base });
+        }
+      }
+      const leave = [], clashes = [];
+      entries.forEach((en, i) => {
+        for (const [s, e] of en.ranges) {
+          leave.push({ id: uid(), type: 'timeoff', personId: en.person.id, projectId: null, start: s, end: e, leaveType: en.leaveType,
+            hoursPerDay: en.hours || +en.person.capacity || 8, notes: en.notes || '', tentative: false, ...(en.seriesId ? { seriesId: en.seriesId } : {}) });
+        }
+        for (const c of leaveClashes(en.person, en.ranges)) clashes.push({ ...c, person: en.person, repeat: !!en.seriesId, key: `${i}:${c.alloc.id}` });
+      });
+      return { entries, leave, clashes, skipped, fuzzy };
+    }
+
+    function renderReview(plan) {
+      const days = plan.leave.reduce((n, x) => n + workdays(x.start, x.end), 0);
+      const byPerson = new Map();
+      for (const en of plan.entries) {
+        const k = en.person.id;
+        if (!byPerson.has(k)) byPerson.set(k, { person: en.person, ranges: [], types: new Set() });
+        byPerson.get(k).ranges.push(...en.ranges); byPerson.get(k).types.add(en.leaveType);
+      }
+      const rows = [...byPerson.values()].map(({ person, ranges, types }) => {
+        const d = ranges.reduce((n, [s, e]) => n + workdays(s, e), 0);
+        const when = ranges.length === 1 ? rangeLabel(ranges[0][0], ranges[0][1]) : `${ranges.length} days, ${shortDate(ranges[0][0])} – ${shortDate(ranges[ranges.length - 1][1])}`;
+        return `<tr><td>${esc(person.name)}</td><td>${esc([...types].join(', '))}</td><td>${when}</td><td class="num">${d}</td></tr>`;
+      }).join('');
+      const opt = (v, l, dis) => `<option value="${v}" ${dis ? 'disabled' : ''}>${l}</option>`;
+      const clashRows = plan.clashes.map((c) => {
+        const pr = findProject(c.alloc.projectId) || {};
+        return `<div class="clash">
+          <span class="dot" style="background:${pr.color || '#888'}"></span>
+          <div class="clash-what"><b>${esc(c.person.name)}</b> is booked on <b>${esc(pr.name || 'a project')}</b>${isPipeline(pr) ? ` <span class="tag pipe">Pipeline · ${pr.winChance}%</span>` : ''}
+            <span class="hint">${rangeLabel(c.alloc.start, c.alloc.end)} · ${round1(c.alloc.hoursPerDay)}h/day · ${c.days} day${c.days === 1 ? '' : 's'} clash</span></div>
+          <select data-clash="${c.key}" aria-label="What to do with this booking">
+            ${opt('keep', 'Keep it (shows as over capacity)')}
+            ${opt('handover', 'Hand over: make those days an unfilled slot')}
+            ${opt('pushback', 'Push back: resume after the leave', c.repeat)}
+          </select></div>`;
+      }).join('');
+      return `
+        <p class="summary"><b>${byPerson.size} ${byPerson.size === 1 ? 'person' : 'people'}</b> · ${days} working day${days === 1 ? '' : 's'} of time off${plan.clashes.length ? ` · <span class="over-text">${plan.clashes.length} booking${plan.clashes.length === 1 ? '' : 's'} affected</span>` : ' · no clashes with booked work'}</p>
+        ${plan.fuzzy.length ? `<p class="hint" style="margin:0">Matched by close spelling: ${plan.fuzzy.map((x) => `"${esc(x.typed)}" → ${esc(x.person.name)}`).join(', ')}. Go back if any are wrong.</p>` : ''}
+        ${plan.skipped.length ? `<p class="error" style="margin:0">${plan.skipped.length} row${plan.skipped.length === 1 ? '' : 's'} will be skipped: ${plan.skipped.slice(0, 3).map((x) => `"${esc(x.line)}" (${esc(x.why)})`).join('; ')}${plan.skipped.length > 3 ? '…' : ''}</p>` : ''}
+        <div class="table-wrap review-table"><table><thead><tr><th>Person</th><th>Type</th><th>When</th><th class="num">Days</th></tr></thead><tbody>${rows}</tbody></table></div>
+        ${plan.clashes.length ? `<div class="field"><span>Work booked during this time off</span>
+          <div class="clash-all">Set all to <select id="allActions"><option value="keep">Keep</option><option value="handover">Hand over</option><option value="pushback">Push back</option></select>
+          <span class="hint">Handed-over days appear as unfilled slots, so you can pick who covers them.</span></div>
+          <div class="clashes">${clashRows}</div></div>` : ''}`;
     }
   }
 
@@ -1944,6 +2340,7 @@
         break;
       }
       case 'new-pipeline': openProjectModal(null, { status: 'pipeline' }); break;
+      case 'bulk-leave': openBulkLeaveModal(); break;
       case 'fc-toggle-bid': {
         const set = fcExcluded();
         if (set.has(t.dataset.id)) set.delete(t.dataset.id); else set.add(t.dataset.id);
@@ -2023,7 +2420,7 @@
       const lines = [['Person', 'Discipline', 'Type', 'Project', 'Project status', 'Win chance', 'Client', 'Start', 'End', 'Hours/day', 'Total hours', 'Tentative', 'Notes'].join(',')];
       for (const a of [...state.allocations].sort((x, y) => (x.start < y.start ? -1 : 1))) {
         const p = findPerson(a.personId) || {}, pr = findProject(a.projectId) || {};
-        lines.push([isSlot(a) ? 'Unfilled slot' : p.name, discNameById(allocDiscipline(a)), a.type === 'timeoff' ? 'Time off' : isSlot(a) ? 'Unfilled slot' : 'Project',
+        lines.push([isSlot(a) ? 'Unfilled slot' : p.name, discNameById(allocDiscipline(a)), a.type === 'timeoff' ? `Time off: ${a.leaveType || 'Other'}` : isSlot(a) ? 'Unfilled slot' : 'Project',
           pr.name, pr.status || '', pr.status === 'pipeline' ? `${pr.winChance}%` : '', pr.client, a.start, a.end, a.hoursPerDay, hoursInRange(a, a.start, a.end), a.tentative ? 'yes' : '', a.notes].map(q).join(','));
       }
       download(`baseline-schedule-${todayStr()}.csv`, lines.join('\n'), 'text/csv'); toast('CSV exported');

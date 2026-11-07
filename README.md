@@ -23,6 +23,12 @@ A lightweight resource-planning app in the style of tools like Float: see who is
   - Add holidays one at a time, or paste a list (`date, name, region` per line).
   - Shutdowns are date ranges, such as an end-of-year closure, for everyone or for one region.
   - These days are removed from capacity, but they **don't block scheduling**. Work placed on them is still allowed and still counted, and it gets an amber marker instead of an over-capacity warning. The Report shows the capacity removed and the hours worked on those days.
+- **Time off, in bulk** (**+ Time off** on the Schedule or People page):
+  - **Leave types:** Annual leave, Personal/carer's leave, Sick leave, Long service leave, RDO, Training, Conference, Site induction, Other. The Report breaks time off down by type.
+  - **Choose people:** tick people one by one, or pick a whole discipline, a state, or everyone, then set the dates, a part day if needed, and the leave type.
+  - **Paste a list** from Excel or an HR export (*name, first day, last day, type, hours*). Names are matched even when spelt slightly differently ("N. Patel"), and the preview flags anything it couldn't read.
+  - **Repeating time off** for RDOs, 9-day fortnights and part-time days (e.g. every 2nd Friday). Public holidays are skipped. "Delete series from here" removes the rest of a series.
+  - **Clash review** before saving: for each booking the leave overlaps, choose **Keep**, **Hand over** (those days become an unfilled slot to fill from the suggestions) or **Push back** (the work resumes after the leave).
 - **Tentative** allocations appear as striped bars.
 - **Projects**: client, color, billable or non-billable, archived.
   - **Start/end dates and budgeted hours.** You see budget used against remaining. Bookings outside the project dates get a dashed amber outline, and the booking form warns when a booking would go over budget or outside the dates. These are warnings only; nothing is blocked.
