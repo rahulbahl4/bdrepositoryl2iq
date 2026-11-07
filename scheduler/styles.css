@@ -65,14 +65,10 @@ button { cursor: pointer; }
   background: var(--panel); border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; }
-.logo {
-  width: 22px; height: 22px; border-radius: 6px;
-  background:
-    linear-gradient(var(--accent), var(--accent)) 3px 5px / 10px 4px no-repeat,
-    linear-gradient(#00a389, #00a389) 7px 11px / 12px 4px no-repeat,
-    linear-gradient(#f2994a, #f2994a) 3px 17px / 8px 4px no-repeat,
-    var(--accent-soft);
-}
+.brand { color: inherit; text-decoration: none; border-radius: 8px; }
+.brand:hover .mark { transform: rotate(-8deg) scale(1.06); }
+.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.mark { width: 26px; height: 26px; flex: none; transition: transform .25s ease; }
 .tabs { display: flex; gap: 2px; height: 100%; }
 .tabs button {
   background: none; border: 0; padding: 0 14px; height: 100%;
@@ -316,7 +312,7 @@ tbody tr:hover { background: var(--panel-2); }
 @media (max-width: 720px) {
   :root { --side: 150px; }
   .topbar { gap: 10px; padding: 0 10px; }
-  .brand { font-size: 0; gap: 0; }
+  .brand span { display: none; }
   .tabs button { padding: 0 8px; font-size: 13px; }
   .tabs { min-width: 0; overflow-x: auto; }
   #undoBtn, #redoBtn { display: none; }

@@ -4,7 +4,10 @@
 
 A lightweight resource-planning app in the style of tools like Float: see who is working on what, when, and how booked everyone is.
 
-**Run it:** open `scheduler/index.html` in a browser (no build step or dependencies). Or serve the folder, e.g. `npx serve scheduler`.
+**Run it:** open `scheduler/index.html` in a browser for the homepage, or `scheduler/app.html` to go straight to the app. There's no build step and no dependencies. You can also serve the folder, e.g. `npx serve scheduler`.
+
+- `index.html`, `home.css`, `home.js`: the animated homepage, with a live schedule preview, drifting project timelines and a team wall showing utilization rings.
+- `app.html`, `styles.css`, `app.js`: the scheduler app. Its logo links back to the homepage.
 
 ### Features
 - **Schedule timeline**: people as rows, days as columns, with Days / Weeks / Months zoom, Today and prev/next navigation.

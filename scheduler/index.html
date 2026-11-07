@@ -4,39 +4,179 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Crewplan</title>
-  <link rel="stylesheet" href="styles.css">
+  <meta name="description" content="Crewplan is a resource scheduler for teams: see who is working on what, when, and who has room. Drag work between people, track capacity across holidays and shutdowns, and plan projects phase by phase.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236366f1'/%3E%3Cstop offset='1' stop-color='%2306b6d4'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M21.7 10.3A8 8 0 1 0 21.7 21.7' fill='none' stroke='%23fff' stroke-width='3.4' stroke-linecap='round'/%3E%3Crect x='13.5' y='14.4' width='11' height='3.2' rx='1.6' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="home.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand"><span class="logo" aria-hidden="true"></span>Crewplan</div>
-    <nav class="tabs" id="tabs">
-      <button data-view="schedule">Schedule</button>
-      <button data-view="projects">Projects</button>
-      <button data-view="people">People</button>
-      <button data-view="holidays">Holidays</button>
-      <button data-view="report">Report</button>
+  <header class="nav" id="nav">
+    <a class="brand" href="index.html" aria-label="Crewplan home">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <defs><linearGradient id="cpMarkNav" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs>
+        <rect width="32" height="32" rx="9" fill="url(#cpMarkNav)"/>
+        <path d="M21.7 10.3A8 8 0 1 0 21.7 21.7" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/>
+        <rect x="13.5" y="14.4" width="11" height="3.2" rx="1.6" fill="#fff"/>
+      </svg>
+      <span>Crewplan</span>
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#features">Features</a>
+      <a href="#team">For big teams</a>
+      <a href="#how">How it works</a>
     </nav>
-    <div class="topbar-actions">
-      <button class="icon-btn" id="undoBtn" title="Undo (Ctrl+Z)">&#8630;</button>
-      <button class="icon-btn" id="redoBtn" title="Redo (Ctrl+Shift+Z)">&#8631;</button>
-      <div class="menu">
-        <button class="icon-btn" id="menuBtn" title="More">&#8943;</button>
-        <div class="menu-pop" id="menuPop" hidden>
-          <button data-action="export">Export data (JSON)</button>
-          <button data-action="import">Import data (JSON)</button>
-          <button data-action="csv">Export schedule (CSV)</button>
-          <hr>
-          <button data-action="sample">Load sample data</button>
-          <button data-action="clear" class="danger-text">Clear all data</button>
-        </div>
-      </div>
-    </div>
+    <a class="btn btn-primary" href="app.html">Open Crewplan</a>
   </header>
-  <div class="toolbar" id="toolbar"></div>
-  <main id="main"></main>
-  <div id="modalRoot"></div>
-  <div id="toast" role="status" aria-live="polite"></div>
-  <input type="file" id="importFile" accept="application/json,.json" hidden>
-  <script src="app.js"></script>
+
+  <main>
+    <!-- ============ HERO ============ -->
+    <section class="hero">
+      <canvas class="hero-bg" id="heroBg" aria-hidden="true"></canvas>
+      <div class="hero-glow" aria-hidden="true"></div>
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <span class="eyebrow"><span class="pulse" aria-hidden="true"></span>Resource planning for busy teams</span>
+          <h1>Every project. Every person. <span class="grad">One living schedule.</span></h1>
+          <p class="lede">
+            Crewplan shows who's working on what, when, and who has room for more.
+            Drag work between people, keep capacity accurate across public holidays and shutdowns,
+            and watch projects take shape phase by phase.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary btn-lg" href="app.html">Open Crewplan <span aria-hidden="true">&rarr;</span></a>
+            <a class="btn btn-ghost btn-lg" href="#features">See what it does</a>
+          </div>
+          <ul class="hero-points">
+            <li>No sign-up</li>
+            <li>Runs in your browser</li>
+            <li>Export any time</li>
+          </ul>
+        </div>
+
+        <figure class="board-card" aria-label="Animated preview of a team schedule">
+          <div class="board-chrome">
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="board-title">Schedule · all projects</span>
+            <span class="live"><span class="pulse" aria-hidden="true"></span>Live</span>
+          </div>
+          <canvas id="board"></canvas>
+          <figcaption class="board-legend" id="boardLegend"></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ============ FEATURES ============ -->
+    <section class="section" id="features">
+      <div class="section-head reveal">
+        <span class="kicker">Features</span>
+        <h2>Everything you need to plan people, and nothing you don't</h2>
+        <p>One timeline for your whole team, with the details that make a schedule trustworthy.</p>
+      </div>
+      <div class="features">
+        <article class="feature reveal">
+          <div class="f-icon" style="--c:#6366f1"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="11" height="4" rx="2"/><rect x="8" y="11" width="13" height="4" rx="2"/><rect x="5" y="17" width="8" height="3" rx="1.5"/></svg></div>
+          <h3>Drag-and-drop timeline</h3>
+          <p>Draw a booking across the days you need. Drag it to another person, stretch it, or hold Alt to copy it.</p>
+        </article>
+        <article class="feature reveal">
+          <div class="f-icon" style="--c:#10b981"><svg viewBox="0 0 24 24"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/></svg></div>
+          <h3>Capacity at a glance</h3>
+          <p>Every day shows how booked each person is. You see overbooking in red before it becomes a problem.</p>
+        </article>
+        <article class="feature reveal">
+          <div class="f-icon" style="--c:#f59e0b"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 15h3"/></svg></div>
+          <h3>Holidays by state</h3>
+          <p>Public holidays for each state and territory, plus shutdowns. They come out of capacity without stopping anyone from working.</p>
+        </article>
+        <article class="feature reveal">
+          <div class="f-icon" style="--c:#a855f7"><svg viewBox="0 0 24 24"><path d="M4 7h10M4 12h16M4 17h7"/><circle cx="18" cy="7" r="2"/><circle cx="14" cy="17" r="2"/></svg></div>
+          <h3>Projects, phases &amp; budgets</h3>
+          <p>Give projects dates, budgeted hours and phases. Crewplan flags bookings that go over budget or outside the dates.</p>
+        </article>
+        <article class="feature reveal">
+          <div class="f-icon" style="--c:#06b6d4"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="2"/><rect x="14" y="4" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg></div>
+          <h3>Group by discipline or project</h3>
+          <p>See the team by discipline, or switch to projects to see exactly who's on each one. Move work between projects with a drag.</p>
+        </article>
+        <article class="feature reveal">
+          <div class="f-icon" style="--c:#ef5d6c"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></div>
+          <h3>Reports &amp; exports</h3>
+          <p>Capacity, billable and non-billable hours, time off and utilization by person and project. Export to CSV or JSON.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============ CROWD ============ -->
+    <section class="section crowd" id="team">
+      <div class="crowd-copy reveal">
+        <span class="kicker">For big teams</span>
+        <h2>Lots of people. Lots of projects. Still one clear picture.</h2>
+        <p>
+          As work moves between people, Crewplan keeps everyone's load in view. The rings show how booked each person is,
+          turning red when someone is over capacity, so you can rebalance before it becomes a problem.
+        </p>
+        <ul class="ticks">
+          <li>Utilization for every person, this week and the next four</li>
+          <li>Free hours shown before you book anyone</li>
+          <li>Undo and redo for every change</li>
+        </ul>
+      </div>
+      <div class="crowd-wall reveal" id="crowd" aria-label="Animated team of people with utilization rings"></div>
+    </section>
+
+    <!-- ============ HOW ============ -->
+    <section class="section" id="how">
+      <div class="section-head reveal">
+        <span class="kicker">How it works</span>
+        <h2>Up and running in minutes</h2>
+      </div>
+      <ol class="steps">
+        <li class="step reveal">
+          <span class="step-n">1</span>
+          <h3>Add your team</h3>
+          <p>People, disciplines, hours per day, and the state or territory each person works in.</p>
+        </li>
+        <li class="step reveal">
+          <span class="step-n">2</span>
+          <h3>Set up projects</h3>
+          <p>Clients, dates, budgeted hours and phases, with a colour for each project so it stands out on the timeline.</p>
+        </li>
+        <li class="step reveal">
+          <span class="step-n">3</span>
+          <h3>Schedule &amp; rebalance</h3>
+          <p>Drag work onto the timeline, watch capacity update live, and move things around as plans change.</p>
+        </li>
+      </ol>
+    </section>
+
+    <!-- ============ CTA ============ -->
+    <section class="section">
+      <div class="final-cta reveal">
+        <canvas class="cta-bg" id="ctaBg" aria-hidden="true"></canvas>
+        <h2>See your team's next month at a glance</h2>
+        <p>It opens with sample data, so you can try everything straight away.</p>
+        <a class="btn btn-light btn-lg" href="app.html">Open Crewplan <span aria-hidden="true">&rarr;</span></a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <a class="brand" href="index.html" aria-label="Crewplan home">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <defs><linearGradient id="cpMarkFoot" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs>
+        <rect width="32" height="32" rx="9" fill="url(#cpMarkFoot)"/>
+        <path d="M21.7 10.3A8 8 0 1 0 21.7 21.7" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/>
+        <rect x="13.5" y="14.4" width="11" height="3.2" rx="1.6" fill="#fff"/>
+      </svg>
+      <span>Crewplan</span>
+    </a>
+    <p>Crewplan runs entirely in your browser. Your schedule is saved on this device.</p>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="app.html">Open the app</a>
+    </nav>
+  </footer>
+
+  <script src="home.js"></script>
 </body>
 </html>
