@@ -11,18 +11,18 @@
 
   // Example OT jobs (fictional). `short` is used on the bars, `name` in the legend.
   const PROJECTS = [
-    { name: 'Water Treatment SCADA', short: 'WTP SCADA', color: '#5b7cff' },
-    { name: 'Substation Automation', short: 'Substation', color: '#14b8a6' },
-    { name: 'Packaging Line PLC', short: 'Packaging PLC', color: '#f59e0b' },
-    { name: 'Mine Site Telemetry', short: 'Mine Telemetry', color: '#a855f7' },
-    { name: 'Pump Station Upgrades', short: 'Pump Stations', color: '#f05d6c' },
-    { name: 'Service & Support', short: 'Service', color: '#64748b' },
+    { name: 'Water Treatment SCADA', short: 'WTP SCADA', color: '#ff5a1f' },
+    { name: 'Substation Automation', short: 'Substation', color: '#d4ff3a' },
+    { name: 'Packaging Line PLC', short: 'Packaging PLC', color: '#f3efe6' },
+    { name: 'Mine Site Telemetry', short: 'Mine Telemetry', color: '#ff2e88' },
+    { name: 'Pump Station Upgrades', short: 'Pump Stations', color: '#ffb000' },
+    { name: 'Service & Support', short: 'Service', color: '#a69f90' },
   ];
   const PHASES = ['Design', 'Integration', 'FAT', 'IFAT', 'Commissioning', 'SAT'];
   const PEOPLE = [
-    ['Ava Thompson', 'Design', '#5b7cfa'], ['Liam Carter', 'Design', '#7b61d9'], ['Noah Patel', 'Engineering', '#13a383'],
-    ['Mia Chen', 'Engineering', '#b8862a'], ['Ethan Brooks', 'Engineering', '#4c9a50'], ['Lucas Kim', 'QA', '#2f8fc9'],
-    ['Sofia Rossi', 'Project Mgmt', '#c85a8e'], ['Zoe Martin', 'Marketing', '#e48a3c'], ['Omar Haddad', 'Engineering', '#3f7fd6'],
+    ['Ava Thompson', 'Controls', '#ff5a1f'], ['Liam Carter', 'Electrical', '#d4ff3a'], ['Noah Patel', 'Controls', '#ffb000'],
+    ['Mia Chen', 'SCADA', '#ff2e88'], ['Ethan Brooks', 'Network', '#f3efe6'], ['Lucas Kim', 'Commissioning', '#ff8a5c'],
+    ['Sofia Rossi', 'Project Mgmt', '#b6e02e'], ['Zoe Martin', 'Project Mgmt', '#e8d9b0'], ['Omar Haddad', 'Controls', '#ffc94d'],
   ];
   const initials = (n) => n.split(' ').map((w) => w[0]).join('');
 
@@ -222,7 +222,7 @@
     function draw(g) {
       const { ctx, w, h } = c;
       ctx.clearRect(0, 0, w, h);
-      ctx.font = '600 11px system-ui, -apple-system, Segoe UI, sans-serif';
+      ctx.font = '600 11px Archivo, system-ui, sans-serif';
       ctx.textBaseline = 'middle';
 
       // day columns + header
@@ -237,11 +237,11 @@
         }
         ctx.fillStyle = dow === 1 ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)';
         ctx.fillRect(x, HEAD, 1, h - HEAD);
-        ctx.fillStyle = dow === 0 || dow === 6 ? 'rgba(200,205,235,0.4)' : 'rgba(220,224,245,0.75)';
+        ctx.fillStyle = dow === 0 || dow === 6 ? 'rgba(243,239,230,0.4)' : 'rgba(243,239,230,0.8)';
         ctx.textAlign = 'center';
-        ctx.font = '500 9.5px system-ui, sans-serif';
+        ctx.font = '500 9.5px Archivo, system-ui, sans-serif';
         if (g.dayW > 26) ctx.fillText('SMTWTFS'[dow], x + g.dayW / 2, 12);
-        ctx.font = '700 12px system-ui, sans-serif';
+        ctx.font = '700 12px Archivo, system-ui, sans-serif';
         ctx.fillText(String(date.getDate()), x + g.dayW / 2, 26);
       }
       ctx.fillStyle = 'rgba(255,255,255,0.08)';
@@ -263,42 +263,42 @@
       // "now" line
       const nowX = g.side + 1.5 * g.dayW;
       const grad = ctx.createLinearGradient(0, HEAD, 0, h);
-      grad.addColorStop(0, 'rgba(103,232,249,0.9)'); grad.addColorStop(1, 'rgba(103,232,249,0.1)');
+      grad.addColorStop(0, 'rgba(212,255,58,0.95)'); grad.addColorStop(1, 'rgba(212,255,58,0.06)');
       ctx.fillStyle = grad;
       ctx.fillRect(nowX, HEAD, 2, h - HEAD);
-      ctx.fillStyle = '#67e8f9';
+      ctx.fillStyle = '#d4ff3a';
       roundRect(ctx, nowX - 15, h - 20, 32, 15, 7); ctx.fill();
-      ctx.fillStyle = '#062a33'; ctx.textAlign = 'center'; ctx.font = '700 9.5px system-ui, sans-serif';
+      ctx.fillStyle = '#0e0e0c'; ctx.textAlign = 'center'; ctx.font = '700 9.5px Archivo, system-ui, sans-serif';
       ctx.fillText('NOW', nowX + 1, h - 12.5);
 
       // sidebar (drawn over bars so they slide underneath)
-      ctx.fillStyle = 'rgb(17,22,48)';
+      ctx.fillStyle = '#1a1916';
       ctx.fillRect(0, 0, g.side, h);
       ctx.fillStyle = 'rgba(255,255,255,0.08)';
       ctx.fillRect(g.side - 1, 0, 1, h);
       ctx.textAlign = 'left';
-      ctx.fillStyle = 'rgba(200,205,235,0.6)'; ctx.font = '600 10.5px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(243,239,230,0.55)'; ctx.font = '600 10.5px Archivo, system-ui, sans-serif';
       ctx.fillText(g.narrow ? 'Engineers' : `Engineers · ${moved} moved`, 14, HEAD / 2 + 1);
       rows.forEach((row, i) => {
         const y = rowY(i, g), cy = y + g.rowH / 2;
         const rad = Math.min(13, g.rowH / 2 - 5);
         ctx.fillStyle = row.color;
         ctx.beginPath(); ctx.arc(14 + rad, cy, rad, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#fff'; ctx.font = '700 9.5px system-ui, sans-serif'; ctx.textAlign = 'center';
+        ctx.fillStyle = '#0e0e0c'; ctx.font = '800 9.5px Archivo, system-ui, sans-serif'; ctx.textAlign = 'center';
         ctx.fillText(initials(row.name), 14 + rad, cy + 0.5);
         ctx.textAlign = 'left';
         const tx = 14 + rad * 2 + 9;
-        ctx.fillStyle = '#e6e8f8'; ctx.font = '600 11.5px system-ui, sans-serif';
+        ctx.fillStyle = '#f3efe6'; ctx.font = '600 11.5px Archivo, system-ui, sans-serif';
         ctx.fillText(g.narrow ? row.name.split(' ')[0] : row.name, tx, cy - 7);
         // utilization meter
         const mw = g.side - tx - (g.narrow ? 12 : 44);
         const u = row.util;
         ctx.fillStyle = 'rgba(255,255,255,0.1)';
         roundRect(ctx, tx, cy + 5, mw, 4, 2); ctx.fill();
-        ctx.fillStyle = u > 1.02 ? '#f87171' : u > 0.97 ? '#818cf8' : '#34d399';
+        ctx.fillStyle = u > 1.02 ? '#ff2e4d' : u > 0.97 ? '#ff5a1f' : '#d4ff3a';
         roundRect(ctx, tx, cy + 5, Math.max(4, mw * Math.min(1, u)), 4, 2); ctx.fill();
         if (!g.narrow) {
-          ctx.fillStyle = u > 1.02 ? '#fca5a5' : 'rgba(200,205,235,0.75)'; ctx.font = '700 10px system-ui, sans-serif';
+          ctx.fillStyle = u > 1.02 ? '#ff6b81' : 'rgba(243,239,230,0.7)'; ctx.font = '700 10px Archivo, system-ui, sans-serif';
           ctx.fillText(`${Math.round(u * 100)}%`, tx + mw + 6, cy + 7.5);
         }
       });
@@ -340,12 +340,12 @@
         const r = barRect(toast.bar, toast.row, g);
         const alpha = Math.min(1, toast.life * 2);
         ctx.globalAlpha = alpha;
-        ctx.font = '700 11px system-ui, sans-serif';
+        ctx.font = '700 11px Archivo, system-ui, sans-serif';
         const tw = ctx.measureText(toast.text).width + 18;
         const tx = clamp(r.x, g.side + 4, w - tw - 4), ty = r.y - 22 - (1.6 - toast.life) * 6;
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = '#d4ff3a';
         roundRect(ctx, tx, ty, tw, 19, 9.5); ctx.fill();
-        ctx.fillStyle = '#1b1f3b'; ctx.textAlign = 'left';
+        ctx.fillStyle = '#0e0e0c'; ctx.textAlign = 'left';
         ctx.fillText(toast.text, tx + 9, ty + 10);
         ctx.globalAlpha = 1;
       }
@@ -362,7 +362,7 @@
       if (wd > 46 && ht >= 12) {
         ctx.save();
         ctx.beginPath(); ctx.rect(x + 6, y, wd - 10, ht); ctx.clip();
-        ctx.fillStyle = '#fff'; ctx.font = `700 ${ht > 15 ? 11 : 10}px system-ui, sans-serif`; ctx.textAlign = 'left';
+        ctx.fillStyle = '#0e0e0c'; ctx.font = `800 ${ht > 15 ? 11 : 10}px Archivo, system-ui, sans-serif`; ctx.textAlign = 'left';
         const label = wd > 150 ? `${p.short} · ${b.phase} · ${b.h}h/d` : wd > 96 ? `${p.short} · ${b.phase}` : p.short;
         ctx.fillText(label, x + 7, y + ht / 2 + 0.5);
         ctx.restore();
@@ -376,12 +376,12 @@
       ctx.scale(pressed ? 0.9 : 1, pressed ? 0.9 : 1);
       ctx.beginPath();
       ctx.moveTo(0, 0); ctx.lineTo(0, 17); ctx.lineTo(4.5, 13); ctx.lineTo(7.5, 19.5); ctx.lineTo(10, 18.4); ctx.lineTo(7.2, 12); ctx.lineTo(12.5, 12); ctx.closePath();
-      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#111827'; ctx.lineWidth = 1.3;
+      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#0e0e0c'; ctx.lineWidth = 1.3;
       ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 6; ctx.shadowOffsetY = 2;
       ctx.fill(); ctx.shadowColor = 'transparent'; ctx.stroke();
       if (pressed) {
         ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(103,232,249,0.7)'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.strokeStyle = 'rgba(212,255,58,0.95)'; ctx.lineWidth = 2; ctx.stroke();
       }
       ctx.restore();
     }
@@ -428,7 +428,7 @@
       'Grace', 'Hugo', 'Aria', 'Finn', 'Maya', 'Theo', 'Nina', 'Sam', 'Ella', 'Max', 'Lily', 'Arjun', 'Hana', 'Oscar', 'Ivy', 'Ben',
       'Zara', 'Eli', 'Tara', 'Luca', 'Amir', 'Jade', 'Remy', 'Sana'];
     const LAST = 'ABCDEFGHJKLMNPRSTW';
-    const COLORS = ['#5b7cfa', '#13a383', '#e48a3c', '#c85a8e', '#7b61d9', '#2f8fc9', '#4c9a50', '#b8862a', '#3f7fd6', '#d9534f'];
+    const COLORS = ['#ff5a1f', '#d4ff3a', '#ffb000', '#ff2e88', '#f3efe6', '#ff8a5c', '#b6e02e', '#e8d9b0', '#ffc94d', '#ff7aa8'];
     const C = 2 * Math.PI * 22;
     const people = FIRST.map((f, i) => ({ initials: f[0] + LAST[i % LAST.length], color: COLORS[i % COLORS.length], u: rand(0.35, 0.95) }));
     wall.innerHTML = people.map((p, i) => `

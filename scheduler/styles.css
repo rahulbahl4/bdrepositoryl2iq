@@ -515,3 +515,5 @@ tbody tr:hover { background: var(--panel-2); }
 .clash-all select { width: auto; }
 .clash select { width: 100%; }
 @media (max-width: 720px) { .pick-list { grid-template-columns: 1fr; } }
+.brand .wordmark { font-weight: 900; font-size: 19px; letter-spacing: -0.04em; }
+.brand .wordmark i { font-style: normal; color: #ff5a1f; }

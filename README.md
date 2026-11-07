@@ -8,7 +8,7 @@ A lightweight resource-planning app in the style of tools like Float: see who is
 
 **Run it:** open `scheduler/index.html` in a browser for the homepage, or `scheduler/app.html` to go straight to the app. There's no build step and no dependencies. You can also serve the folder, e.g. `npx serve scheduler`.
 
-- `index.html`, `home.css`, `home.js`: the animated homepage, aimed at OT and automation teams. It has a live schedule preview of OT jobs, an animated project lifecycle (Design → Integration → FAT → IFAT → Install & commission → SAT → Handover), a feature grid, and a team wall showing utilization rings.
+- `index.html`, `home.css`, `home.js`: the animated homepage, aimed at OT and automation teams. It uses a bold industrial look: warm black and cream, safety orange and electric lime, and condensed Archivo type. It has a live schedule preview of OT jobs, an animated project lifecycle (Design → Integration → FAT → IFAT → Install & commission → SAT → Handover), a feature grid, and a team wall showing utilization rings.
 - `app.html`, `styles.css`, `app.js`: the scheduler app. Its logo links back to the homepage.
 
 ### Features
