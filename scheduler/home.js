@@ -9,14 +9,16 @@
   const lerp = (a, b, t) => a + (b - a) * t;
   const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
+  // Example OT jobs (fictional). `short` is used on the bars, `name` in the legend.
   const PROJECTS = [
-    { name: 'Website Redesign', color: '#5b7cff' },
-    { name: 'Mobile App', color: '#14b8a6' },
-    { name: 'Brand Refresh', color: '#f59e0b' },
-    { name: 'Data Platform', color: '#a855f7' },
-    { name: 'Launch Campaign', color: '#f05d6c' },
-    { name: 'Support', color: '#64748b' },
+    { name: 'Water Treatment SCADA', short: 'WTP SCADA', color: '#5b7cff' },
+    { name: 'Substation Automation', short: 'Substation', color: '#14b8a6' },
+    { name: 'Packaging Line PLC', short: 'Packaging PLC', color: '#f59e0b' },
+    { name: 'Mine Site Telemetry', short: 'Mine Telemetry', color: '#a855f7' },
+    { name: 'Pump Station Upgrades', short: 'Pump Stations', color: '#f05d6c' },
+    { name: 'Service & Support', short: 'Service', color: '#64748b' },
   ];
+  const PHASES = ['Design', 'Integration', 'FAT', 'IFAT', 'Commissioning', 'SAT'];
   const PEOPLE = [
     ['Ava Thompson', 'Design', '#5b7cfa'], ['Liam Carter', 'Design', '#7b61d9'], ['Noah Patel', 'Engineering', '#13a383'],
     ['Mia Chen', 'Engineering', '#b8862a'], ['Ethan Brooks', 'Engineering', '#4c9a50'], ['Lucas Kim', 'QA', '#2f8fc9'],
@@ -144,13 +146,13 @@
       for (const row of rows) {
         while (row.next[0] < until) { // main lane: mostly back-to-back work
           const len = randInt(2, 7);
-          row.bars.push({ id: uid++, start: row.next[0], len, p: randInt(0, PROJECTS.length - 1), lane: 0, h: pick([4, 6, 8, 8]) });
+          row.bars.push({ id: uid++, start: row.next[0], len, p: randInt(0, PROJECTS.length - 1), phase: pick(PHASES), lane: 0, h: pick([4, 6, 8, 8]) });
           row.next[0] += len + (Math.random() < 0.55 ? 0 : randInt(1, 2));
         }
         while (row.next[1] < until) { // second lane: occasional overlapping work
           const len = randInt(2, 5);
           const start = row.next[1] + randInt(1, 6);
-          row.bars.push({ id: uid++, start, len, p: randInt(0, PROJECTS.length - 1), lane: 1, h: pick([2, 2, 4]) });
+          row.bars.push({ id: uid++, start, len, p: randInt(0, PROJECTS.length - 1), phase: pick(PHASES), lane: 1, h: pick([2, 2, 4]) });
           row.next[1] = start + len;
         }
       }
@@ -173,7 +175,7 @@
       }
       return null;
     }
-    const PHASES = [0.7, 0.22, 1.0, 0.25]; // approach, lift, carry, drop
+    const STEPS = [0.7, 0.22, 1.0, 0.25]; // drag steps: approach, lift, carry, drop
 
     function rowY(i, g) { return HEAD + PAD_TOP + i * g.rowH; }
     function barRect(b, rowIndex, g) {
@@ -192,8 +194,8 @@
       }
       if (drag) {
         drag.clock += dt;
-        while (drag && drag.clock >= PHASES[drag.phase]) {
-          drag.clock -= PHASES[drag.phase];
+        while (drag && drag.clock >= STEPS[drag.phase]) {
+          drag.clock -= STEPS[drag.phase];
           drag.phase++;
           if (drag.phase === 2) drag.fromRow.bars = drag.fromRow.bars.filter((b) => b !== drag.bar); // picked up
           if (drag.phase === 4) {
@@ -276,7 +278,7 @@
       ctx.fillRect(g.side - 1, 0, 1, h);
       ctx.textAlign = 'left';
       ctx.fillStyle = 'rgba(200,205,235,0.6)'; ctx.font = '600 10.5px system-ui, sans-serif';
-      ctx.fillText(g.narrow ? 'Team' : `Team · ${moved} moved`, 14, HEAD / 2 + 1);
+      ctx.fillText(g.narrow ? 'Engineers' : `Engineers · ${moved} moved`, 14, HEAD / 2 + 1);
       rows.forEach((row, i) => {
         const y = rowY(i, g), cy = y + g.rowH / 2;
         const rad = Math.min(13, g.rowH / 2 - 5);
@@ -307,7 +309,7 @@
         const a = barRect(drag.bar, fromI, g);
         const b = barRect({ ...drag.bar, start: drag.toStart, lane: drag.toLane }, toI, g);
         let r = a, lift = 0, target;
-        const p = drag.clock / PHASES[drag.phase];
+        const p = drag.clock / STEPS[drag.phase];
         if (drag.phase === 0) {
           target = { x: a.x + Math.min(30, a.w / 2), y: a.y + a.h / 2 };
           cursor.x = lerp(cursor.x, target.x, ease(Math.min(1, p * 1.2)));
@@ -361,7 +363,7 @@
         ctx.save();
         ctx.beginPath(); ctx.rect(x + 6, y, wd - 10, ht); ctx.clip();
         ctx.fillStyle = '#fff'; ctx.font = `700 ${ht > 15 ? 11 : 10}px system-ui, sans-serif`; ctx.textAlign = 'left';
-        const label = wd > 120 ? `${p.name}  ·  ${b.h}h/d` : p.name;
+        const label = wd > 150 ? `${p.short} · ${b.phase} · ${b.h}h/d` : wd > 96 ? `${p.short} · ${b.phase}` : p.short;
         ctx.fillText(label, x + 7, y + ht / 2 + 0.5);
         ctx.restore();
       }
@@ -393,6 +395,30 @@
       update(reduceMotion ? 0 : dt, g);
       draw(g);
     });
+  })();
+
+  // ------------------------------------------------------------------ lifecycle stepper
+  (function lifecycle() {
+    const board = document.getElementById('lifecycleBoard');
+    if (!board) return;
+    const steps = [...board.querySelectorAll('.lc-step')];
+    const fill = board.querySelector('.lc-fill'), token = board.querySelector('.lc-token');
+    let i = 0, timer = 0;
+    const show = (n) => {
+      steps.forEach((el, k) => { el.classList.toggle('done', k < n); el.classList.toggle('active', k === n); });
+      const pctDone = (n / (steps.length - 1)) * 100;
+      fill.style.width = `${pctDone}%`;
+      token.style.left = `${pctDone}%`;
+    };
+    show(reduceMotion ? 2 : 0);
+    if (reduceMotion) return;
+    // Hovering a phase jumps to it and pauses; leaving resumes the cycle.
+    steps.forEach((el, k) => {
+      el.addEventListener('mouseenter', () => { clearInterval(timer); timer = 0; i = k; show(k); });
+      el.addEventListener('mouseleave', () => start());
+    });
+    const start = () => { if (!timer) timer = setInterval(() => { i = (i + 1) % steps.length; show(i); }, 1900); };
+    new IntersectionObserver(([e]) => { if (e.isIntersecting) start(); else { clearInterval(timer); timer = 0; } }, { threshold: 0.3 }).observe(board);
   })();
 
   // ------------------------------------------------------------------ team wall

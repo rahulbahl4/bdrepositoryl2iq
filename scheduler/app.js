@@ -147,18 +147,18 @@
 
   // ---------------------------------------------------------------- sample data
   function seed() {
-    const disciplines = ['Design', 'Engineering', 'Project Management', 'QA', 'Marketing'].map((name) => ({ id: uid(), name }));
+    const disciplines = ['Controls Engineering', 'SCADA & Software', 'Electrical Design', 'Commissioning', 'Project Management'].map((name) => ({ id: uid(), name }));
     const D = (name) => disciplines.find((x) => x.name === name).id;
     const P = (name, role, disc, region, capacity = 8) => ({ id: uid(), name, role, disciplineId: D(disc), region, capacity });
     const people = [
-      P('Ava Thompson', 'Design Lead', 'Design', 'NSW'),
-      P('Liam Carter', 'Product Designer', 'Design', 'VIC'),
-      P('Noah Patel', 'Frontend Engineer', 'Engineering', 'VIC'),
-      P('Mia Chen', 'Backend Engineer', 'Engineering', 'NSW'),
-      P('Ethan Brooks', 'Full-stack Engineer', 'Engineering', 'QLD', 6),
-      P('Lucas Kim', 'QA Engineer', 'QA', 'VIC'),
+      P('Ava Thompson', 'Lead Controls Engineer', 'Controls Engineering', 'NSW'),
+      P('Liam Carter', 'Electrical Designer', 'Electrical Design', 'VIC'),
+      P('Noah Patel', 'PLC Programmer', 'Controls Engineering', 'VIC'),
+      P('Mia Chen', 'SCADA Engineer', 'SCADA & Software', 'NSW'),
+      P('Ethan Brooks', 'OT Network Engineer', 'SCADA & Software', 'QLD', 6),
+      P('Lucas Kim', 'Commissioning Engineer', 'Commissioning', 'VIC'),
       P('Sofia Rossi', 'Project Manager', 'Project Management', 'NSW'),
-      P('Zoe Martin', 'Content Strategist', 'Marketing', 'QLD', 4),
+      P('Zoe Martin', 'Project Coordinator', 'Project Management', 'QLD', 4),
     ];
     const w = startOfWeek(todayStr());
     const Ph = (name, s, e) => ({ id: uid(), name, start: addDays(w, s), end: addDays(w, e) });
@@ -166,18 +166,22 @@
       id: uid(), name, client, color, billable, archived: false, start: '', end: '', budgetHours: null, phases: [], ...extra,
     });
     const projects = [
-      Pr('Website Redesign', 'Northwind', COLORS[0], true, {
+      // Fictional clients and jobs, phased the way OT projects usually run.
+      Pr('Water Treatment SCADA Upgrade', 'Riverbend Water', COLORS[0], true, {
         start: addDays(w, -7), end: addDays(w, 41), budgetHours: 900,
-        phases: [Ph('Discovery', -7, 4), Ph('Design', 0, 18), Ph('Build', 7, 32), Ph('Launch', 35, 41)],
+        phases: [Ph('Design', -7, 8), Ph('Integration', 7, 25), Ph('FAT', 28, 32), Ph('Commissioning', 35, 38), Ph('SAT', 39, 41)],
       }),
-      Pr('Mobile App v2', 'Globex', COLORS[1], true, {
+      Pr('Substation Automation', 'Southgate Energy', COLORS[1], true, {
         start: addDays(w, -7), end: addDays(w, 60), budgetHours: 1400,
-        phases: [Ph('Alpha', -7, 18), Ph('Beta', 21, 46), Ph('Release', 49, 60)],
+        phases: [Ph('Design', -7, 11), Ph('Integration', 14, 32), Ph('FAT', 35, 39), Ph('IFAT', 42, 46), Ph('Commissioning', 49, 55), Ph('SAT', 56, 60)],
       }),
-      Pr('Brand Refresh', 'Initech', COLORS[2], true, { start: addDays(w, 7), end: addDays(w, 32), budgetHours: 200, phases: [Ph('Concepts', 7, 18), Ph('Refinement', 21, 32)] }),
-      Pr('Data Platform', 'Umbrella', COLORS[4], true, { budgetHours: 600 }),
-      Pr('Launch Campaign', 'Northwind', COLORS[3]),
-      Pr('Internal Tools', 'In-house', COLORS[9], false),
+      Pr('Packaging Line PLC Retrofit', 'Coastal Foods', COLORS[2], true, {
+        start: addDays(w, 7), end: addDays(w, 32), budgetHours: 200,
+        phases: [Ph('Design', 7, 13), Ph('Integration', 14, 25), Ph('FAT', 28, 32)],
+      }),
+      Pr('Mine Site Telemetry', 'Red Ridge Mining', COLORS[4], true, { budgetHours: 600 }),
+      Pr('Pump Station Upgrades', 'Metro Water', COLORS[3]),
+      Pr('Service & Support', 'In-house', COLORS[9], false),
     ];
     const A = (pi, pj, s, len, h, extra = {}) => ({
       id: uid(), type: 'task', personId: people[pi].id, projectId: projects[pj].id,
@@ -188,9 +192,9 @@
       start: addDays(w, s), end: addDays(w, s + len - 1), hoursPerDay: people[pi].capacity, notes, tentative: false,
     });
     const allocations = [
-      A(0, 0, -7, 19, 6, { notes: 'Design system + key pages' }), A(0, 2, 14, 12, 8), A(0, 5, -7, 12, 2),
+      A(0, 0, -7, 19, 6, { notes: 'Control philosophy and functional design spec' }), A(0, 2, 14, 12, 8), A(0, 5, -7, 12, 2),
       A(1, 0, -7, 12, 8), A(1, 2, 7, 19, 6), A(1, 4, 28, 12, 8, { tentative: true }),
-      A(2, 0, 0, 26, 8, { notes: 'Build marketing pages' }), A(2, 1, 28, 19, 8),
+      A(2, 0, 0, 26, 8, { notes: 'PLC code and HMI screens, ready for FAT' }), A(2, 1, 28, 19, 8),
       A(3, 3, -7, 33, 6), A(3, 1, 0, 12, 4),
       A(4, 1, -7, 26, 6), A(4, 5, 21, 12, 3),
       A(5, 0, 14, 12, 4), A(5, 1, 7, 26, 4), A(5, 3, 35, 12, 8, { tentative: true }),

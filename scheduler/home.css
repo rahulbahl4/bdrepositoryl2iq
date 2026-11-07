@@ -177,6 +177,55 @@ h1, h2, h3 { line-height: 1.15; letter-spacing: -0.02em; margin: 0; }
 .feature h3 { font-size: 19px; margin-bottom: 8px; }
 .feature p { margin: 0; color: var(--muted); font-size: 15.5px; }
 
+/* Lifecycle */
+.lifecycle {
+  --pad: 32px; --gap: 14px;
+  position: relative; padding: var(--pad); border-radius: 24px;
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
+}
+.lc-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, 1fr); gap: var(--gap); position: relative; }
+/* The track runs from the centre of the first dot to the centre of the last one. */
+.lc-track {
+  position: absolute; top: calc(var(--pad) + 9px); height: 4px; border-radius: 2px; background: var(--surface-2);
+  left: calc(var(--pad) + (100% - 2 * var(--pad) - 6 * var(--gap)) / 14);
+  right: calc(var(--pad) + (100% - 2 * var(--pad) - 6 * var(--gap)) / 14);
+}
+.lc-fill {
+  position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 2px;
+  background: linear-gradient(90deg, var(--brand-1), var(--brand-2)); transition: width .9s cubic-bezier(.4, .1, .2, 1);
+}
+.lc-token {
+  position: absolute; top: 50%; left: 0; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 0 4px rgba(6, 182, 212, .35), 0 0 18px 4px rgba(6, 182, 212, .55);
+  transition: left .9s cubic-bezier(.4, .1, .2, 1);
+}
+.lc-step {
+  position: relative; text-align: center; padding: 34px 8px 14px; border-radius: 14px;
+  transition: background .4s ease, transform .4s ease;
+}
+.lc-dot {
+  position: absolute; top: 0; left: 50%; width: 22px; height: 22px; margin-left: -11px; border-radius: 50%;
+  background: var(--surface); border: 3px solid var(--border); transition: all .4s ease; z-index: 1;
+}
+.lc-step.done .lc-dot { border-color: var(--brand-1); background: var(--brand-1); }
+.lc-step.active .lc-dot {
+  border-color: var(--brand-2); background: var(--surface); transform: scale(1.25);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--brand-2) 22%, transparent);
+}
+.lc-step.active { background: var(--surface-2); transform: translateY(-3px); }
+.lc-step h3 { font-size: 16px; margin: 6px 0 6px; transition: color .3s ease; }
+.lc-step.active h3 { color: var(--brand-1); }
+.lc-step p { margin: 0 0 10px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.lc-crew {
+  display: inline-block; font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  color: var(--muted); background: var(--surface-2); border: 1px solid var(--border);
+}
+.lc-step.active .lc-crew { color: #fff; border-color: transparent; background: linear-gradient(135deg, var(--brand-1), var(--brand-2)); }
+.cta-tag {
+  display: inline-block; margin-bottom: 16px; font-size: 13px; font-weight: 700; letter-spacing: .04em;
+  padding: 6px 14px; border-radius: 999px; background: rgba(255, 255, 255, .14); border: 1px solid rgba(255, 255, 255, .25);
+}
+
 /* Crowd */
 .crowd { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 56px; align-items: center; }
 .ticks { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 10px; }
@@ -255,6 +304,14 @@ h1, h2, h3 { line-height: 1.15; letter-spacing: -0.02em; margin: 0; }
   .features { grid-template-columns: repeat(2, 1fr); }
   .steps { grid-template-columns: 1fr; }
   .step:not(:last-child)::after { display: none; }
+  .lc-steps { grid-template-columns: 1fr; gap: 6px; }
+  .lc-track { display: none; }
+  .lc-step { text-align: left; padding: 12px 14px 12px 52px; }
+  .lc-step.active { transform: none; }
+  .lc-dot { top: 14px; left: 18px; margin-left: 0; }
+  .lc-step:not(:last-child)::after {
+    content: ""; position: absolute; left: 28px; top: 40px; bottom: -14px; width: 2px; background: var(--border);
+  }
 }
 @media (max-width: 640px) {
   .nav { gap: 12px; }
